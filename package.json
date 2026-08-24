@@ -1,0 +1,13 @@
+{
+  "name": "geto-student",
+  "version": "1.0.0",
+  "description": "Geto Student — Verified Student Accommodation in Tanzania",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "build": "npm run build --prefix client",
+    "start": "cd server && node index.js",
+    "dev:api": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev"
+  }
+}

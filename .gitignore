@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+server/node_modules/
+client/node_modules/
+
+# Environment
+.env
+server/.env
+
+# Build output
+server/public/
+client/dist/
+
+# Uploads (user-generated content — back up separately)
+server/uploads/*
+!server/uploads/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# Local dev tools
+.claude/
+start.bat
+setup-database.bat
