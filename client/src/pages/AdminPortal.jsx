@@ -270,20 +270,26 @@ function PropertiesList() {
 
 // ─── Add Property Modal ───────────────────────────────────────
 function AddPropertyModal({ onClose, onSaved }) {
-  const [unis, setUnis]     = useState([]);
-  const [zones, setZones]   = useState([]);
-  const [clusters, setClust]= useState([]);
-  const [owners, setOwners] = useState([]);
-  const [step, setStep]     = useState(1); // 1=info, 2=rooms
-  const [propId, setPropId] = useState(null);
-  const [err, setErr]       = useState('');
-  const [saving, setSaving] = useState(false);
-  const [rooms, setRooms]   = useState([]);
+  const [unis, setUnis]         = useState([]);
+  const [zones, setZones]       = useState([]);
+  const [clusters, setClust]    = useState([]);
+  const [step, setStep]         = useState(1); // 1=info, 2=owner, 3=rooms
+  const [propId, setPropId]     = useState(null);
+  const [err, setErr]           = useState('');
+  const [saving, setSaving]     = useState(false);
+  const [rooms, setRooms]       = useState([]);
+  const [selectedUnis, setSelUnis] = useState([]); // multiple universities
+
+  // Owner section
+  const [ownerMode, setOwnerMode]   = useState('search'); // 'search' | 'create'
+  const [ownerSearch, setOwnerSearch] = useState('');
+  const [ownerResults, setOwnerResults] = useState([]);
+  const [selectedOwner, setSelOwner]  = useState(null);
+  const [ownerForm, setOwnerForm] = useState({ name:'', email:'', phone:'', password:'', business_name:'' });
 
   const [f, setF] = useState({
-    name:'', property_type:'Hostel', description:'', address:'', area:'',
-    distance_km:'', nearest_university_id:'', zone_id:'', cluster_id:'',
-    owner_id:'', youtube_video_id:'',
+    name:'', property_type:'Hostel', description:'', address:'', landmark:'', area:'',
+    distance_km:'', nearest_university_id:'', zone_id:'', cluster_id:'', youtube_video_id:'',
   });
   const [rf, setRf] = useState({
     room_type:'Single', monthly_price:'', deposit:'', capacity:'1',
@@ -291,27 +297,63 @@ function AddPropertyModal({ onClose, onSaved }) {
   });
 
   useEffect(() => {
-    Promise.all([api.get('/universities'), api.get('/zones'),
-      api.get('/admin/users', { params: { role: 'property_owner' } }).catch(() => ({ data: [] }))
-    ]).then(([u, z, o]) => { setUnis(u.data); setZones(z.data); setOwners(o.data); });
+    Promise.all([api.get('/universities'), api.get('/zones')])
+      .then(([u, z]) => { setUnis(u.data); setZones(z.data); });
   }, []);
+
+  useEffect(() => {
+    if (ownerSearch.length < 2) { setOwnerResults([]); return; }
+    const t = setTimeout(() => {
+      api.get('/admin/users', { params: { role: 'property_owner', q: ownerSearch } })
+        .then(r => setOwnerResults(r.data)).catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+  }, [ownerSearch]);
+
+  const toggleUni = (id) => {
+    const strId = String(id);
+    setSelUnis(prev => prev.includes(strId) ? prev.filter(x => x !== strId) : [...prev, strId]);
+    if (!f.nearest_university_id) {
+      const u = unis.find(u => String(u.id) === strId);
+      if (u) setF(p => ({ ...p, nearest_university_id: strId, zone_id: u.zone_id||'', area: u.area||p.area }));
+    }
+  };
 
   const onUniChange = (uid) => {
     setF(p => ({ ...p, nearest_university_id: uid }));
     const u = unis.find(u => String(u.id) === String(uid));
     if (u) { setF(p => ({ ...p, nearest_university_id: uid, zone_id: u.zone_id||'', area: u.area||p.area })); }
+    if (!selectedUnis.includes(String(uid))) setSelUnis(prev => [...prev, String(uid)]);
   };
+
   const onZoneChange = (zid) => {
     setF(p => ({ ...p, zone_id: zid, cluster_id: '' }));
-    api.get('/clusters', { params: { zone_id: zid } }).then(r => setClust(r.data)).catch(() => {});
+    if (zid) api.get('/clusters', { params: { zone_id: zid } }).then(r => setClust(r.data)).catch(() => {});
+    else setClust([]);
   };
 
   const saveStep1 = async (e) => {
     e.preventDefault(); setErr(''); setSaving(true);
     try {
-      const r = await api.post('/admin/properties', f);
+      setStep(2); setSaving(false);
+    } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); setSaving(false); }
+  };
+
+  const saveStep2 = async (e) => {
+    e.preventDefault(); setErr(''); setSaving(true);
+    try {
+      let ownerId = selectedOwner?.id || null;
+      if (ownerMode === 'create') {
+        if (!ownerForm.name || !ownerForm.email || !ownerForm.phone || !ownerForm.password) {
+          setErr('Jaza maelezo yote ya mmiliki.'); setSaving(false); return;
+        }
+        const r = await api.post('/admin/users/owner', ownerForm);
+        ownerId = r.data.id;
+      }
+      const payload = { ...f, owner_id: ownerId || '', university_ids: selUnis };
+      const r = await api.post('/admin/properties', payload);
       setPropId(r.data.id);
-      setStep(2);
+      setStep(3);
     } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
     finally { setSaving(false); }
   };
@@ -349,11 +391,13 @@ function AddPropertyModal({ onClose, onSaved }) {
         <div className="p-6 overflow-y-auto max-h-[70vh]">
           {/* Step indicator */}
           <div className="flex items-center gap-2 mb-6 text-xs font-semibold">
-            <span className={`w-6 h-6 rounded-full flex items-center justify-center ${step>=1?'bg-primary text-white':'bg-slate-200 text-slate-500'}`}>1</span>
-            <span className={step>=1?'text-primary':'text-slate-400'}>Maelezo</span>
-            <div className="flex-1 h-px bg-slate-200"/>
-            <span className={`w-6 h-6 rounded-full flex items-center justify-center ${step>=2?'bg-primary text-white':'bg-slate-200 text-slate-500'}`}>2</span>
-            <span className={step>=2?'text-primary':'text-slate-400'}>Vyumba</span>
+            {[['1','Maelezo'],['2','Mmiliki'],['3','Vyumba']].map(([n,label],i) => (
+              <React.Fragment key={n}>
+                {i>0 && <div className="flex-1 h-px bg-slate-200"/>}
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center ${step>i?'bg-primary text-white':'bg-slate-200 text-slate-500'}`}>{n}</span>
+                <span className={step>i?'text-primary':'text-slate-400'}>{label}</span>
+              </React.Fragment>
+            ))}
           </div>
 
           {step === 1 && (
@@ -370,11 +414,27 @@ function AddPropertyModal({ onClose, onSaved }) {
                   </select>
                 </div>
                 <div>
-                  <label className="label">Chuo/Taasisi Karibu *</label>
+                  <label className="label">Chuo Kikuu (la Kwanza) *</label>
                   <select className="input" value={f.nearest_university_id} onChange={e=>onUniChange(e.target.value)} required>
                     <option value="">Chagua chuo…</option>
                     {unis.map(u => <option key={u.id} value={u.id}>{u.name} ({u.short_name})</option>)}
                   </select>
+                </div>
+                {/* Multi-uni selector */}
+                <div className="col-span-2">
+                  <label className="label">Vyuo Vingine Karibu (chagua zaidi ya kimoja)</label>
+                  <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 bg-slate-50 rounded-xl border border-slate-200">
+                    {unis.map(u => {
+                      const sel = selectedUnis.includes(String(u.id));
+                      return (
+                        <button key={u.id} type="button" onClick={() => toggleUni(u.id)}
+                          className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors ${sel?'bg-primary text-white border-primary':'bg-white text-slate-600 border-slate-200 hover:border-primary'}`}>
+                          {u.short_name||u.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedUnis.length > 0 && <p className="text-xs text-primary mt-1">{selectedUnis.length} chuo kimechaguliwa</p>}
                 </div>
                 <div>
                   <label className="label">Kanda</label>
@@ -403,18 +463,13 @@ function AddPropertyModal({ onClose, onSaved }) {
                   <input className="input" value={f.address} onChange={e=>setF(p=>({...p,address:e.target.value}))} placeholder="k.m. Barabara ya UDSM, Mlimani" />
                 </div>
                 <div className="col-span-2">
+                  <label className="label">Kivutio / Mahali Karibu (kwa utafutaji wa wanafunzi)</label>
+                  <input className="input" value={f.landmark} onChange={e=>setF(p=>({...p,landmark:e.target.value}))} placeholder="k.m. karibu na Mlimani Mall, nyuma ya UDSM Gate 3" />
+                </div>
+                <div className="col-span-2">
                   <label className="label">Maelezo</label>
                   <textarea className="input" rows={3} value={f.description} onChange={e=>setF(p=>({...p,description:e.target.value}))} placeholder="Eleza mali hii…" />
                 </div>
-                {owners.length > 0 && (
-                  <div className="col-span-2">
-                    <label className="label">Mmiliki (hiari — ikiwa hana akaunti, acha wazi)</label>
-                    <select className="input" value={f.owner_id} onChange={e=>setF(p=>({...p,owner_id:e.target.value}))}>
-                      <option value="">Geto Admin (itabadilishwa baadaye)</option>
-                      {owners.map(o => <option key={o.id} value={o.id}>{o.name} — {o.phone}</option>)}
-                    </select>
-                  </div>
-                )}
                 <div>
                   <label className="label">YouTube Video ID (hiari)</label>
                   <input className="input" value={f.youtube_video_id} onChange={e=>setF(p=>({...p,youtube_video_id:e.target.value}))} placeholder="k.m. dQw4w9WgXcQ" />
@@ -423,12 +478,90 @@ function AddPropertyModal({ onClose, onSaved }) {
               {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={onClose} className="btn-ghost">Ghairi</button>
-                <button type="submit" disabled={saving} className="btn-primary">{saving?'Inahifadhi…':'Hifadhi & Endelea →'}</button>
+                <button type="submit" disabled={!f.name || !f.nearest_university_id} className="btn-primary">Endelea: Mmiliki →</button>
               </div>
             </form>
           )}
 
           {step === 2 && (
+            <form onSubmit={saveStep2} className="space-y-5">
+              <div className="flex gap-3 mb-2">
+                <button type="button" onClick={()=>setOwnerMode('search')}
+                  className={`flex-1 py-2 text-sm font-semibold rounded-xl border transition-colors ${ownerMode==='search'?'bg-primary text-white border-primary':'bg-white text-slate-600 border-slate-200 hover:border-primary'}`}>
+                  Tafuta Mmiliki Aliyopo
+                </button>
+                <button type="button" onClick={()=>setOwnerMode('create')}
+                  className={`flex-1 py-2 text-sm font-semibold rounded-xl border transition-colors ${ownerMode==='create'?'bg-primary text-white border-primary':'bg-white text-slate-600 border-slate-200 hover:border-primary'}`}>
+                  Unda Akaunti Mpya
+                </button>
+              </div>
+
+              {ownerMode === 'search' && (
+                <div>
+                  <label className="label">Tafuta kwa jina, simu, au barua pepe</label>
+                  <input className="input" value={ownerSearch} onChange={e=>setOwnerSearch(e.target.value)} placeholder="k.m. Amina au +255700..." />
+                  {ownerResults.length > 0 && (
+                    <div className="mt-2 border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                      {ownerResults.map(o => (
+                        <div key={o.id} onClick={() => { setSelOwner(o); setOwnerSearch(o.name); setOwnerResults([]); }}
+                          className={`px-4 py-3 cursor-pointer hover:bg-slate-50 flex items-center justify-between ${selectedOwner?.id===o.id?'bg-primary/5':''}`}>
+                          <div>
+                            <p className="font-semibold text-sm text-slate-800">{o.name}</p>
+                            <p className="text-xs text-slate-500">{o.phone} · {o.email}</p>
+                          </div>
+                          {selectedOwner?.id===o.id && <Check size={15} className="text-primary"/>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {selectedOwner && (
+                    <div className="mt-2 bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3">
+                      <Check size={15} className="text-green-600 shrink-0"/>
+                      <div>
+                        <p className="font-semibold text-sm text-green-800">{selectedOwner.name}</p>
+                        <p className="text-xs text-green-600">{selectedOwner.phone} · {selectedOwner.email}</p>
+                      </div>
+                      <button type="button" onClick={()=>{setSelOwner(null);setOwnerSearch('');}} className="ml-auto text-slate-400 hover:text-red-500"><X size={14}/></button>
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-400 mt-2">Ikiwa mmiliki hana akaunti bado, bofya "Unda Akaunti Mpya" au acha wazi — utabadilishwa baadaye.</p>
+                </div>
+              )}
+
+              {ownerMode === 'create' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="label">Jina la Mmiliki *</label>
+                    <input className="input" value={ownerForm.name} onChange={e=>setOwnerForm(p=>({...p,name:e.target.value}))} required />
+                  </div>
+                  <div>
+                    <label className="label">Barua Pepe *</label>
+                    <input className="input" type="email" value={ownerForm.email} onChange={e=>setOwnerForm(p=>({...p,email:e.target.value}))} required />
+                  </div>
+                  <div>
+                    <label className="label">Simu *</label>
+                    <input className="input" value={ownerForm.phone} onChange={e=>setOwnerForm(p=>({...p,phone:e.target.value}))} required />
+                  </div>
+                  <div>
+                    <label className="label">Jina la Biashara</label>
+                    <input className="input" value={ownerForm.business_name} onChange={e=>setOwnerForm(p=>({...p,business_name:e.target.value}))} />
+                  </div>
+                  <div>
+                    <label className="label">Nenosiri la Kwanza *</label>
+                    <input className="input" type="password" value={ownerForm.password} onChange={e=>setOwnerForm(p=>({...p,password:e.target.value}))} required minLength={6} />
+                  </div>
+                </div>
+              )}
+
+              {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
+              <div className="flex justify-between pt-2">
+                <button type="button" onClick={()=>setStep(1)} className="btn-ghost text-sm"><ArrowLeft size={14}/> Rudi</button>
+                <button type="submit" disabled={saving} className="btn-primary text-sm">{saving?'Inaunda…':'Hifadhi & Endelea →'}</button>
+              </div>
+            </form>
+          )}
+
+          {step === 3 && (
             <div className="space-y-5">
               {/* Room list */}
               {rooms.length > 0 && (

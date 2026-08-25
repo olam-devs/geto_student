@@ -407,29 +407,34 @@ function routeProperties(array $parts, string $method): void {
 
     // GET /api/properties — public listing / search
     if ($method === 'GET' && !$id) {
-        $sql = "SELECT p.id,p.name,p.property_type,p.area,p.distance_km,p.transport_options,
+        $sql = "SELECT p.id,p.name,p.property_type,p.area,p.landmark,p.distance_km,p.transport_options,
                        p.verified,p.youtube_video_id,p.views_count,p.created_at,
                        p.nearest_university_id,u.name AS university_name,u.short_name AS university_short,
                        z.code AS zone_code,z.name AS zone_name,c.code AS cluster_code,c.name AS cluster_name,
                        (SELECT url FROM property_photos ph WHERE ph.property_id=p.id AND ph.is_main=1 LIMIT 1) AS main_photo,
                        MIN(r.monthly_price) AS price_from,
-                       SUM(r.total_count - r.occupied_count) AS rooms_available
+                       SUM(r.total_count - r.occupied_count) AS rooms_available,
+                       GROUP_CONCAT(DISTINCT pu_u.short_name ORDER BY pu_u.short_name SEPARATOR ', ') AS nearby_universities
                 FROM properties p
                 JOIN universities u ON u.id=p.nearest_university_id
+                LEFT JOIN property_universities pu ON pu.property_id=p.id
+                LEFT JOIN universities pu_u ON pu_u.id=pu.university_id
                 LEFT JOIN zones z ON z.id=p.zone_id
                 LEFT JOIN clusters c ON c.id=p.cluster_id
                 LEFT JOIN rooms r ON r.property_id=p.id
                 WHERE p.status='approved'";
         $params = [];
         if (!empty($_GET['university_id'])) {
-            $sql .= ' AND p.nearest_university_id=?'; $params[] = (int)$_GET['university_id'];
+            $uid = (int)$_GET['university_id'];
+            $sql .= ' AND (p.nearest_university_id=? OR p.id IN (SELECT property_id FROM property_universities WHERE university_id=?))';
+            $params[] = $uid; $params[] = $uid;
         }
         if (!empty($_GET['zone_id'])) { $sql .= ' AND p.zone_id=?'; $params[] = (int)$_GET['zone_id']; }
         if (!empty($_GET['verified_only']) && $_GET['verified_only']==='true') $sql .= ' AND p.verified=1';
-        if (!empty($_GET['area'])) { $sql .= ' AND p.area LIKE ?'; $params[] = '%'.$_GET['area'].'%'; }
+        if (!empty($_GET['area'])) { $sql .= ' AND (p.area LIKE ? OR p.landmark LIKE ?)'; $params[] = '%'.$_GET['area'].'%'; $params[] = '%'.$_GET['area'].'%'; }
         if (!empty($_GET['q'])) {
-            $sql .= ' AND (p.name LIKE ? OR p.description LIKE ? OR p.area LIKE ?)';
-            $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%';
+            $sql .= ' AND (p.name LIKE ? OR p.description LIKE ? OR p.area LIKE ? OR p.landmark LIKE ?)';
+            $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%';
         }
         if (!empty($_GET['price_max'])) {
             $sql .= ' AND p.id IN (SELECT property_id FROM rooms WHERE monthly_price<=?)';
@@ -961,11 +966,18 @@ function routeAdmin(array $parts, string $method): void {
         $zid = !empty($b['zone_id']) ? (int)$b['zone_id'] : ($uni['zone_id'] ?? null);
         $cid = !empty($b['cluster_id']) ? (int)$b['cluster_id'] : ($uni['cluster_id'] ?? null);
         $ownerId = !empty($b['owner_id']) ? (int)$b['owner_id'] : (int)$u['id'];
-        $pid = qx('INSERT INTO properties (name,property_type,description,address,area,distance_km,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,distance_km,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [$b['name'], $b['property_type']??'Hostel', $b['description']??'',
-             $b['address']??'', $b['area']??'', !empty($b['distance_km']) ? (float)$b['distance_km'] : null,
+             $b['address']??'', $b['landmark']??null, $b['area']??'',
+             !empty($b['distance_km']) ? (float)$b['distance_km'] : null,
              (int)$b['nearest_university_id'], $zid, $cid,
              $ownerId, $b['youtube_video_id']??null, 'approved']);
+        // Populate junction table with all selected universities
+        $uniIds = array_filter(array_map('intval', (array)($b['university_ids'] ?? [(int)$b['nearest_university_id']])));
+        if (!in_array((int)$b['nearest_university_id'], $uniIds)) $uniIds[] = (int)$b['nearest_university_id'];
+        foreach ($uniIds as $uid2) {
+            if ($uid2 > 0) qn('INSERT IGNORE INTO property_universities (property_id,university_id) VALUES (?,?)', [$pid, $uid2]);
+        }
         ok(['id'=>$pid, 'message'=>'Property created and approved.']);
     }
 
@@ -1051,13 +1063,17 @@ function routeAdmin(array $parts, string $method): void {
                 FROM users u LEFT JOIN zones z ON z.id=u.zone_id WHERE 1=1";
         $params = [];
         if ($role) { $sql .= ' AND u.role=?'; $params[] = $role; }
+        if (!empty($_GET['q'])) {
+            $sql .= ' AND (u.name LIKE ? OR u.phone LIKE ? OR u.email LIKE ?)';
+            $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%';
+        }
         // Zone managers only see owners/managers whose properties are in their zone
         if (!$isAdmin) {
             $sql .= " AND (u.role NOT IN ('admin','zone_manager') AND u.id IN
                      (SELECT owner_id FROM properties WHERE zone_id=?))";
             $params[] = $userZoneId;
         }
-        $sql .= ' ORDER BY u.created_at DESC';
+        $sql .= ' ORDER BY u.name ASC LIMIT 50';
         ok(q($sql, $params));
     }
 
@@ -1096,6 +1112,20 @@ function routeAdmin(array $parts, string $method): void {
         requireAdmin();
         qn("UPDATE users SET status='suspended' WHERE id=?", [(int)$sub2]);
         ok(['suspended'=>true]);
+    }
+
+    // ── POST /api/admin/users/owner — create property owner account (admin/geto-manager)
+    if ($method === 'POST' && $sub === 'users' && $sub2 === 'owner') {
+        foreach (['name','email','phone','password'] as $f)
+            if (empty($b[$f])) err(400, "$f required.");
+        if (q1('SELECT id FROM users WHERE email=?', [$b['email']])) err(409, 'Email tayari imesajiliwa.');
+        $ref = makeReferralCode($b['name']);
+        $uid = qx("INSERT INTO users (name,email,phone,whatsapp_phone,password_hash,role,status,business_name,referral_code,terms_accepted)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  [$b['name'],$b['email'],$b['phone'],$b['whatsapp_phone']??$b['phone'],
+                   hashPwd($b['password']),'property_owner','active',
+                   $b['business_name']??null,$ref,1]);
+        ok(['id'=>$uid,'message'=>'Owner account created.']);
     }
 
     // ── POST /api/admin/users/zone-manager — create zone manager (admin only)

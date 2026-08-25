@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import Home from './pages/Home';
+import InstallPrompt from './components/InstallPrompt';
 
 const FindRoom     = lazy(() => import('./pages/FindRoom'));
 const Auth         = lazy(() => import('./pages/Auth'));
@@ -99,6 +100,7 @@ export default function App() {
   return (
     <AuthProvider>
       <AppRoutes />
+      <InstallPrompt />
     </AuthProvider>
   );
 }
