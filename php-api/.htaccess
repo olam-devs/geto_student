@@ -3,6 +3,9 @@ Options -Indexes
   RewriteEngine On
   RewriteBase /
 
+  # Pass Authorization header through to PHP (stripped by cPanel FastCGI by default)
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
   # Serve uploads directly
   RewriteRule ^uploads/ - [L]
 

@@ -70,7 +70,11 @@ function qn(string $sql, array $p = []): int   { $st = db()->prepare($sql); $st-
 
 // ─── Auth Helpers ──────────────────────────────────────────────
 function authUser(): array {
-    $h = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    // cPanel FastCGI strips Authorization; fall back to env var set by .htaccess RewriteRule
+    $h = $_SERVER['HTTP_AUTHORIZATION']
+      ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+      ?? (function_exists('getallheaders') ? (getallheaders()['Authorization'] ?? '') : '')
+      ?? '';
     $token = str_starts_with($h, 'Bearer ') ? substr($h, 7) : '';
     $data = $token ? jwtVerify($token) : null;
     if (!$data) err(401, 'Unauthenticated.');
