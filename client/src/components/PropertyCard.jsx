@@ -57,7 +57,7 @@ export default function PropertyCard({ property, onClick }) {
               <span className="text-[11px] font-normal text-slate-400">/mo</span>
             </span>
           </div>
-          <span className="text-xs font-semibold text-accent-600 group-hover:text-accent-700 group-hover:underline transition-colors">View details →</span>
+          <span className="text-xs font-semibold bg-primary text-white px-3 py-1.5 rounded-lg group-hover:bg-primary/90 transition-colors">Book Now</span>
         </div>
       </div>
     </div>

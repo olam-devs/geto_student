@@ -361,6 +361,36 @@ function routeUniversities(array $parts, string $method): void {
         ok(q1("SELECT u.*,z.code AS zone_code,z.name AS zone_name FROM universities u
                LEFT JOIN zones z ON z.id=u.zone_id WHERE u.id=?", [$id]));
     }
+    // POST /api/universities — admin adds a university
+    if ($method === 'POST') {
+        requireAdmin();
+        $b = body();
+        if (empty($b['name'])) err(400, 'University name required.');
+        $uid = qx('INSERT INTO universities (name,short_name,area,district,zone_id,cluster_id,gps_lat,gps_lng) VALUES (?,?,?,?,?,?,?,?)',
+            [$b['name'], $b['short_name']??null, $b['area']??null, $b['district']??null,
+             !empty($b['zone_id']) ? (int)$b['zone_id'] : null,
+             !empty($b['cluster_id']) ? (int)$b['cluster_id'] : null,
+             $b['gps_lat']??null, $b['gps_lng']??null]);
+        ok(['id'=>$uid, 'message'=>'University created.']);
+    }
+    // PUT /api/universities/:id — admin edits a university
+    if ($method === 'PUT' && $id) {
+        requireAdmin();
+        $b = body();
+        $fields=[]; $params=[];
+        foreach (['name','short_name','area','district','gps_lat','gps_lng'] as $f)
+            if (array_key_exists($f,$b)) { $fields[]="$f=?"; $params[]=$b[$f]; }
+        foreach (['zone_id','cluster_id'] as $f)
+            if (array_key_exists($f,$b)) { $fields[]="$f=?"; $params[]= !empty($b[$f]) ? (int)$b[$f] : null; }
+        if ($fields) { $params[]=$id; qn('UPDATE universities SET '.implode(',',$fields).' WHERE id=?',$params); }
+        ok(['updated'=>true]);
+    }
+    // DELETE /api/universities/:id — admin soft-deletes (deactivates) a university
+    if ($method === 'DELETE' && $id) {
+        requireAdmin();
+        qn('UPDATE universities SET active=0 WHERE id=?', [$id]);
+        ok(['deleted'=>true]);
+    }
     err(405, 'Method not allowed.');
 }
 
@@ -920,6 +950,52 @@ function routeAdmin(array $parts, string $method): void {
         $verif     = q1('SELECT * FROM verification_records WHERE property_id=?', [$pid]);
         $manager   = q1("SELECT u.id,u.name,u.email,u.phone FROM property_manager_assignments pma JOIN users u ON u.id=pma.manager_id WHERE pma.property_id=? AND pma.is_active=1", [$pid]);
         ok(array_merge($prop,['photos'=>$photos,'amenities'=>$amenities,'rooms'=>$rooms,'tenants'=>$tenants,'verification'=>$verif,'manager'=>$manager]));
+    }
+
+    // ── POST /api/admin/properties — admin creates a property ─
+    if ($method === 'POST' && $sub === 'properties' && !$sub2) {
+        if (!$isAdmin) err(403, 'Admin only.');
+        $b = body();
+        if (empty($b['name']) || empty($b['nearest_university_id'])) err(400, 'Name and university required.');
+        $uni = q1('SELECT zone_id,cluster_id FROM universities WHERE id=?', [(int)$b['nearest_university_id']]);
+        $zid = !empty($b['zone_id']) ? (int)$b['zone_id'] : ($uni['zone_id'] ?? null);
+        $cid = !empty($b['cluster_id']) ? (int)$b['cluster_id'] : ($uni['cluster_id'] ?? null);
+        $ownerId = !empty($b['owner_id']) ? (int)$b['owner_id'] : (int)$u['id'];
+        $pid = qx('INSERT INTO properties (name,property_type,description,address,area,distance_km,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [$b['name'], $b['property_type']??'Hostel', $b['description']??'',
+             $b['address']??'', $b['area']??'', !empty($b['distance_km']) ? (float)$b['distance_km'] : null,
+             (int)$b['nearest_university_id'], $zid, $cid,
+             $ownerId, $b['youtube_video_id']??null, 'approved']);
+        ok(['id'=>$pid, 'message'=>'Property created and approved.']);
+    }
+
+    // ── POST /api/admin/properties/:id/rooms — add room type ──
+    if ($method === 'POST' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'rooms') {
+        $pid = (int)$sub2;
+        $b = body();
+        if (empty($b['room_type']) || empty($b['monthly_price'])) err(400, 'Room type and price required.');
+        $rid = qx('INSERT INTO rooms (property_id,room_type,monthly_price,deposit,capacity,total_count,occupied_count,furnished,bathroom_type,description) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [$pid, $b['room_type'], (int)$b['monthly_price'], (int)($b['deposit']??0),
+             (int)($b['capacity']??1), (int)($b['total_count']??1), 0,
+             (int)($b['furnished']??0), $b['bathroom_type']??'Shared', $b['description']??null]);
+        ok(['id'=>$rid]);
+    }
+
+    // ── PUT /api/admin/rooms/:room_id — update a room type ────
+    if ($method === 'PUT' && $sub === 'rooms' && is_numeric($sub2)) {
+        $rid = (int)$sub2;
+        $b = body();
+        $fields=[]; $params=[];
+        foreach (['room_type','monthly_price','deposit','capacity','total_count','occupied_count','furnished','bathroom_type','description'] as $f)
+            if (array_key_exists($f,$b)) { $fields[]="$f=?"; $params[]=$b[$f]; }
+        if ($fields) { $params[]=$rid; qn('UPDATE rooms SET '.implode(',',$fields).' WHERE id=?',$params); }
+        ok(['updated'=>true]);
+    }
+
+    // ── DELETE /api/admin/rooms/:room_id — remove a room type ─
+    if ($method === 'DELETE' && $sub === 'rooms' && is_numeric($sub2)) {
+        qn('DELETE FROM rooms WHERE id=?', [(int)$sub2]);
+        ok(['deleted'=>true]);
     }
 
     // ── PUT /api/admin/properties/:id/approve ─────────────────
