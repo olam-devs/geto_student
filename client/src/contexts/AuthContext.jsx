@@ -4,68 +4,65 @@ import api from '../api';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user,  setUser]  = useState(null);   // student / admin
-  const [agent, setAgent] = useState(null);   // dalali
+  const [user, setUser]     = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem('geto_token');
     const stored = localStorage.getItem('geto_user');
-    const storedAgent = localStorage.getItem('geto_agent');
-    if (token && stored)      setUser(JSON.parse(stored));
-    if (token && storedAgent) setAgent(JSON.parse(storedAgent));
+    if (token && stored) {
+      try { setUser(JSON.parse(stored)); } catch {}
+    }
     setLoading(false);
   }, []);
 
-  const loginUser = async (email, password) => {
+  const _saveSession = (token, userData) => {
+    localStorage.setItem('geto_token', token);
+    localStorage.setItem('geto_user', JSON.stringify(userData));
+    setUser(userData);
+  };
+
+  // Frontend: student, property_owner, property_manager
+  const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });
-    localStorage.setItem('geto_token', data.token);
-    localStorage.setItem('geto_user', JSON.stringify(data.user));
-    localStorage.removeItem('geto_agent');
-    setUser(data.user);
-    setAgent(null);
+    _saveSession(data.token, data.user);
     return data.user;
   };
 
-  const loginAgent = async (email, password) => {
-    const { data } = await api.post('/auth/agent/login', { email, password });
-    localStorage.setItem('geto_token', data.token);
-    localStorage.setItem('geto_agent', JSON.stringify(data.agent));
-    localStorage.removeItem('geto_user');
-    setAgent(data.agent);
-    setUser(null);
-    return data.agent;
+  // Backend: admin, zone_manager (used only from /admin page)
+  const staffLogin = async (email, password) => {
+    const { data } = await api.post('/auth/staff/login', { email, password });
+    _saveSession(data.token, data.user);
+    return data.user;
   };
 
-  const registerUser = async (payload) => {
+  const register = async (payload) => {
     const { data } = await api.post('/auth/register', payload);
-    localStorage.setItem('geto_token', data.token);
-    localStorage.setItem('geto_user', JSON.stringify(data.user));
-    setUser(data.user);
-    setAgent(null);
-    return data.user;
-  };
-
-  const registerAgent = async (payload) => {
-    const { data } = await api.post('/auth/agent/register', payload);
+    if (data.token) _saveSession(data.token, data.user);
     return data;
   };
 
   const logout = () => {
     localStorage.removeItem('geto_token');
     localStorage.removeItem('geto_user');
-    localStorage.removeItem('geto_agent');
     setUser(null);
-    setAgent(null);
   };
 
-  const isAdmin  = user?.role === 'admin';
-  const isAgent  = !!agent;
-  const isStudent = user?.role === 'student';
-  const isLoggedIn = !!user || !!agent;
+  const isAdmin       = user?.role === 'admin';
+  const isZoneManager = user?.role === 'zone_manager';
+  const isStaff       = isAdmin || isZoneManager;
+  const isOwner       = user?.role === 'property_owner';
+  const isManager     = user?.role === 'property_manager';
+  const isStudent     = user?.role === 'student';
+  const isLoggedIn    = !!user;
 
   return (
-    <AuthContext.Provider value={{ user, agent, loading, isAdmin, isAgent, isStudent, isLoggedIn, loginUser, loginAgent, registerUser, registerAgent, logout }}>
+    <AuthContext.Provider value={{
+      user, loading, isLoggedIn,
+      isAdmin, isZoneManager, isStaff,
+      isOwner, isManager, isStudent,
+      login, staffLogin, register, logout,
+    }}>
       {!loading && children}
     </AuthContext.Provider>
   );

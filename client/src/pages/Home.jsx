@@ -107,7 +107,7 @@ export default function Home() {
               {/* University chips */}
               <div className="flex flex-wrap gap-2 mb-7">
                 {universities.slice(0, 5).map(u => (
-                  <button key={u.id} onClick={() => navigate(`/browse?university_id=${u.id}`)}
+                  <button key={u.id} onClick={() => navigate(`/find-room?university_id=${u.id}`)}
                     className="inline-flex items-center gap-1.5 bg-white border border-slate-200 hover:border-accent-500 hover:text-accent-600 text-slate-600 text-xs font-semibold px-3 py-2 rounded-full transition-all shadow-sm">
                     <GraduationCap size={11} strokeWidth={2.5}/>
                     {u.short_name}
@@ -116,9 +116,9 @@ export default function Home() {
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
-                <button onClick={() => navigate('/browse')}
+                <button onClick={() => navigate('/find-room')}
                   className="inline-flex items-center gap-2 bg-accent-600 hover:bg-accent-700 text-white font-semibold px-6 py-3 rounded-xl transition-colors shadow-md text-sm">
-                  Browse Rooms <ArrowRight size={15}/>
+                  Tafuta Chumba <ArrowRight size={15}/>
                 </button>
                 <div className="flex items-center gap-2 text-slate-400 text-xs">
                   <CheckCircle2 size={13} className="text-verified"/>
@@ -194,16 +194,16 @@ export default function Home() {
             <p className="section-eyebrow">Browse by Campus</p>
             <h2 className="section-title text-2xl sm:text-3xl">Find a room near your university</h2>
           </div>
-          <button onClick={() => navigate('/browse')}
+          <button onClick={() => navigate('/find-room')}
             className="hidden sm:flex items-center gap-1 text-sm font-semibold text-accent-600 hover:text-accent-700 transition-colors">
-            All rooms <ArrowRight size={14}/>
+            Vyumba vyote <ArrowRight size={14}/>
           </button>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {universities.map(u => (
             <button
               key={u.id}
-              onClick={() => navigate(`/browse?university_id=${u.id}`)}
+              onClick={() => navigate(`/find-room?university_id=${u.id}`)}
               className="bg-white border border-slate-200 rounded-xl p-4 text-left hover:border-accent-500 hover:shadow-md transition-all duration-200 group"
             >
               <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center mb-3 group-hover:bg-accent-50 transition-colors">
@@ -248,9 +248,9 @@ export default function Home() {
             <p className="section-eyebrow">Geto Verified</p>
             <h2 className="section-title text-2xl sm:text-3xl">Inspected and approved rooms</h2>
           </div>
-          <button onClick={() => navigate('/browse?verified_only=true')}
+          <button onClick={() => navigate('/find-room?verified_only=true')}
             className="hidden sm:flex items-center gap-1 text-sm font-semibold text-accent-600 hover:text-accent-700 transition-colors">
-            View all <ArrowRight size={14}/>
+            Ona zote <ArrowRight size={14}/>
           </button>
         </div>
         {featured.length === 0 ? (
@@ -263,7 +263,7 @@ export default function Home() {
           </div>
         )}
         <div className="text-center mt-8 sm:hidden">
-          <button onClick={() => navigate('/browse')} className="btn-outline">Browse all listings →</button>
+          <button onClick={() => navigate('/find-room')} className="btn-outline">Tafuta vyumba vyote →</button>
         </div>
       </section>
 
@@ -288,23 +288,23 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ─── AGENT CTA ─── */}
+      {/* ─── OWNER CTA ─── */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 py-14">
         <div className="relative bg-primary-900 rounded-2xl p-8 sm:p-12 flex flex-col sm:flex-row items-center justify-between gap-6 overflow-hidden">
           <div className="absolute -right-16 -top-16 w-72 h-72 rounded-full bg-white/5 pointer-events-none"/>
           <div className="absolute -right-4 -bottom-14 w-52 h-52 rounded-full bg-accent-600/15 pointer-events-none"/>
           <div className="relative z-10">
-            <p className="text-xs font-bold uppercase tracking-widest text-accent-400 mb-2">For Property Agents</p>
-            <h2 className="font-display font-bold text-2xl sm:text-3xl text-white mb-2">Are you a property agent?</h2>
+            <p className="text-xs font-bold uppercase tracking-widest text-accent-400 mb-2">Kwa Wamiliki wa Mali</p>
+            <h2 className="font-display font-bold text-2xl sm:text-3xl text-white mb-2">Una nyumba au hostel?</h2>
             <p className="text-slate-400 text-sm max-w-md leading-relaxed">
-              Register as a Geto Student agent, get verified, and reach thousands of university students across Dar es Salaam.
+              Sajili mali yako, thibitisha, na wafikia maelfu ya wanafunzi wa vyuo vikuu Tanzania.
             </p>
           </div>
           <button
-            onClick={() => navigate('/auth?tab=agent-register')}
+            onClick={() => navigate('/auth?tab=register')}
             className="btn-accent relative z-10 shrink-0 text-sm py-3 px-8"
           >
-            Register as Agent <ChevronRight size={16}/>
+            Sajili Mali Yako <ChevronRight size={16}/>
           </button>
         </div>
       </section>

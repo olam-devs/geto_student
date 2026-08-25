@@ -23,7 +23,7 @@ function GetoLogo() {
 }
 
 export default function Navbar() {
-  const { user, agent, isLoggedIn, isAdmin, isAgent, isStudent, logout } = useAuth();
+  const { user, isLoggedIn, isAdmin, isZoneManager, isStaff, isOwner, isManager, isStudent, logout } = useAuth();
   const navigate   = useNavigate();
   const location   = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -32,7 +32,7 @@ export default function Navbar() {
 
   const handleSearch = (e) => {
     e.preventDefault();
-    navigate(searchQ.trim() ? `/browse?q=${encodeURIComponent(searchQ.trim())}` : '/browse');
+    navigate(searchQ.trim() ? `/find-room?q=${encodeURIComponent(searchQ.trim())}` : '/find-room');
     setMenuOpen(false);
   };
 
@@ -43,7 +43,7 @@ export default function Navbar() {
     setDropOpen(false);
   };
 
-  const displayName = user?.name || agent?.name || '';
+  const displayName = user?.name || '';
   const initials    = displayName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
   const navLinkCls = (to) =>
@@ -75,9 +75,9 @@ export default function Navbar() {
 
           {/* Desktop right */}
           <div className="hidden md:flex items-center gap-5 ml-auto shrink-0">
-            <Link to="/browse" className={navLinkCls('/browse')}>Browse</Link>
-            {isAdmin  && <Link to="/admin"     className={navLinkCls('/admin')}>Admin</Link>}
-            {isAgent  && <Link to="/agent"     className={navLinkCls('/agent')}>My Listings</Link>}
+            <Link to="/find-room" className={navLinkCls('/find-room')}>Tafuta Chumba</Link>
+            {isStaff   && <Link to="/admin"     className={navLinkCls('/admin')}>Admin</Link>}
+            {(isOwner || isManager) && <Link to="/portal" className={navLinkCls('/portal')}>Portali Yangu</Link>}
             {isStudent && <Link to="/dashboard" className={navLinkCls('/dashboard')}>Dashboard</Link>}
 
             {!isLoggedIn ? (
@@ -111,13 +111,13 @@ export default function Navbar() {
                         <LayoutDashboard size={15} className="text-slate-400"/> My Dashboard
                       </Link>
                     )}
-                    {isAgent && (
-                      <Link to="/agent" onClick={() => setDropOpen(false)}
+                    {(isOwner || isManager) && (
+                      <Link to="/portal" onClick={() => setDropOpen(false)}
                         className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">
-                        <LayoutDashboard size={15} className="text-slate-400"/> Agent Portal
+                        <LayoutDashboard size={15} className="text-slate-400"/> Portali Yangu
                       </Link>
                     )}
-                    {isAdmin && (
+                    {isStaff && (
                       <Link to="/admin" onClick={() => setDropOpen(false)}
                         className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">
                         <Settings size={15} className="text-slate-400"/> Admin Panel
@@ -161,9 +161,9 @@ export default function Navbar() {
             </div>
           </form>
           <hr className="border-slate-100"/>
-          <Link to="/browse"    onClick={() => setMenuOpen(false)} className="block text-slate-700 font-medium text-sm py-1">Browse Rooms</Link>
-          {isAdmin   && <Link to="/admin"     onClick={() => setMenuOpen(false)} className="block text-slate-700 font-medium text-sm py-1">Admin Panel</Link>}
-          {isAgent   && <Link to="/agent"     onClick={() => setMenuOpen(false)} className="block text-slate-700 font-medium text-sm py-1">My Listings</Link>}
+          <Link to="/find-room" onClick={() => setMenuOpen(false)} className="block text-slate-700 font-medium text-sm py-1">Tafuta Chumba</Link>
+          {isStaff   && <Link to="/admin"     onClick={() => setMenuOpen(false)} className="block text-slate-700 font-medium text-sm py-1">Admin Panel</Link>}
+          {(isOwner || isManager) && <Link to="/portal" onClick={() => setMenuOpen(false)} className="block text-slate-700 font-medium text-sm py-1">Portali Yangu</Link>}
           {isStudent && <Link to="/dashboard" onClick={() => setMenuOpen(false)} className="block text-slate-700 font-medium text-sm py-1">Dashboard</Link>}
           <hr className="border-slate-100"/>
           {isLoggedIn ? (

@@ -1,0 +1,28 @@
+Options -Indexes
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Serve uploads directly
+  RewriteRule ^uploads/ - [L]
+
+  # All /api/* requests → PHP router
+  RewriteRule ^api/(.*)$ api/index.php [L,QSA]
+
+  # SPA fallback — serve index.html for unknown paths
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Increase upload limit (host may override)
+<IfModule mod_php8.c>
+  php_value upload_max_filesize 20M
+  php_value post_max_size 25M
+  php_value memory_limit 128M
+</IfModule>
+<IfModule mod_php7.c>
+  php_value upload_max_filesize 20M
+  php_value post_max_size 25M
+  php_value memory_limit 128M
+</IfModule>

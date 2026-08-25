@@ -76,7 +76,7 @@ export default function StudentDashboard() {
           <div>
             <div className="flex items-center justify-between mb-5">
               <h2 className="font-display font-bold text-xl text-slate-900">My Booking Requests</h2>
-              <button onClick={() => navigate('/browse')} className="btn-outline text-sm">Find more rooms</button>
+              <button onClick={() => navigate('/find-room')} className="btn-outline text-sm">Tafuta vyumba zaidi</button>
             </div>
             {loading ? <p className="text-slate-400 text-sm">Loading…</p>
             : bookings.length === 0 ? (
@@ -84,7 +84,7 @@ export default function StudentDashboard() {
                 <div className="text-5xl mb-4">🏠</div>
                 <h3 className="font-display font-bold text-xl text-slate-800 mb-2">No bookings yet</h3>
                 <p className="text-slate-500 text-sm mb-5">Browse verified accommodation and send your first booking request.</p>
-                <button onClick={() => navigate('/browse')} className="btn-primary">Browse Rooms →</button>
+                <button onClick={() => navigate('/find-room')} className="btn-primary">Tafuta Chumba →</button>
               </div>
             ) : (
               <div className="space-y-4">
@@ -129,7 +129,7 @@ export default function StudentDashboard() {
           <div>
             <div className="flex items-center justify-between mb-5">
               <h2 className="font-display font-bold text-xl text-slate-900">Site Viewing Requests</h2>
-              <button onClick={() => navigate('/browse')} className="btn-outline text-sm">Find a property to view</button>
+              <button onClick={() => navigate('/find-room')} className="btn-outline text-sm">Tafuta mali ya kutembelea</button>
             </div>
             {loading ? <p className="text-slate-400 text-sm">Loading…</p>
             : viewings.length === 0 ? (
@@ -137,7 +137,7 @@ export default function StudentDashboard() {
                 <div className="text-5xl mb-4">📅</div>
                 <h3 className="font-display font-bold text-xl text-slate-800 mb-2">No viewing requests</h3>
                 <p className="text-slate-500 text-sm mb-5">Open a property and click "Request Site Viewing" to book an in-person visit.</p>
-                <button onClick={() => navigate('/browse')} className="btn-primary">Browse Properties →</button>
+                <button onClick={() => navigate('/find-room')} className="btn-primary">Tafuta Mali →</button>
               </div>
             ) : (
               <div className="space-y-4">
