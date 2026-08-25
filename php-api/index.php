@@ -1071,9 +1071,9 @@ function routeAdmin(array $parts, string $method): void {
     }
 
     // ── GET /api/admin/zones — zone list with stats (admin only)
-    if ($method === 'GET' && $sub === 'zones') {
+    if ($method === 'GET' && $sub === 'zones' && !$sub2) {
         requireAdmin();
-        ok(q("SELECT z.*,
+        $zones = q("SELECT z.*,
                      COUNT(DISTINCT p.id) AS total_properties,
                      SUM(p.status='approved') AS approved_properties,
                      SUM(p.verified=1) AS verified_properties,
@@ -1083,7 +1083,51 @@ function routeAdmin(array $parts, string $method): void {
               FROM zones z
               LEFT JOIN properties p ON p.zone_id=z.id
               LEFT JOIN rooms r ON r.property_id=p.id
-              WHERE z.active=1 GROUP BY z.id ORDER BY z.code"));
+              GROUP BY z.id ORDER BY z.city, z.code");
+        foreach ($zones as &$z) {
+            $z['clusters'] = q('SELECT id,code,name,active FROM clusters WHERE zone_id=? ORDER BY code', [(int)$z['id']]);
+        }
+        ok($zones);
+    }
+
+    // ── POST /api/admin/zones — create zone
+    if ($method === 'POST' && $sub === 'zones' && !$sub2) {
+        requireAdmin();
+        $b = body();
+        if (empty($b['code']) || empty($b['name']) || empty($b['city'])) err(400, 'code, name, city required.');
+        $code = strtoupper(trim($b['code']));
+        if (strlen($code) < 1 || strlen($code) > 5) err(400, 'Zone code must be 1–5 characters.');
+        if (q1('SELECT id FROM zones WHERE code=?', [$code])) err(409, 'Zone code already exists.');
+        $id = qx('INSERT INTO zones (code,name,city,description) VALUES (?,?,?,?)',
+                 [$code, trim($b['name']), trim($b['city']), trim($b['description']??'')]);
+        ok(['id'=>$id,'code'=>$code,'name'=>trim($b['name']),'city'=>trim($b['city']),'clusters'=>[]]);
+    }
+
+    // ── PUT /api/admin/zones/:id — edit zone
+    if ($method === 'PUT' && $sub === 'zones' && $sub2 && $sub3 !== 'clusters') {
+        requireAdmin();
+        $zid = (int)$sub2;
+        $b = body(); $updates = []; $params = [];
+        foreach (['name','city','description','active'] as $k) {
+            if (array_key_exists($k, $b)) { $updates[] = "$k=?"; $params[] = $b[$k]; }
+        }
+        if (empty($updates)) err(400, 'Nothing to update.');
+        $params[] = $zid;
+        qx('UPDATE zones SET '.implode(',',$updates).' WHERE id=?', $params);
+        ok(['updated'=>true]);
+    }
+
+    // ── POST /api/admin/zones/:id/clusters — add cluster to zone
+    if ($method === 'POST' && $sub === 'zones' && $sub2 && $sub3 === 'clusters') {
+        requireAdmin();
+        $zid = (int)$sub2;
+        if (!q1('SELECT id FROM zones WHERE id=?', [$zid])) err(404, 'Zone not found.');
+        $b = body();
+        if (empty($b['code']) || empty($b['name'])) err(400, 'code and name required.');
+        $code = strtoupper(trim($b['code']));
+        if (q1('SELECT id FROM clusters WHERE code=?', [$code])) err(409, 'Cluster code already exists.');
+        $id = qx('INSERT INTO clusters (zone_id,code,name) VALUES (?,?,?)', [$zid, $code, trim($b['name'])]);
+        ok(['id'=>$id,'zone_id'=>$zid,'code'=>$code,'name'=>trim($b['name']),'active'=>1]);
     }
 
     // ── GET /api/admin/zone-managers ─────────────────────────

@@ -3,7 +3,7 @@ import { useNavigate, Routes, Route, Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, Users, MapPin, CheckSquare,
   LogOut, Menu, X, ChevronRight, Eye, Check, XCircle,
-  Shield, AlertCircle, Loader2, UserPlus, Map
+  Shield, AlertCircle, Loader2, UserPlus, Map, Plus, ChevronDown as Chevron, Globe
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
@@ -380,35 +380,182 @@ function BookingsList() {
 
 // Zones & Clusters (admin only)
 function ZonesView() {
-  const [zones, setZones] = useState([]);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
+  const [zones, setZones]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [expanded, setExpanded] = useState({});
+  const [clusterForms, setClusterForms] = useState({});
+  const [saving, setSaving]     = useState(false);
+  const [err, setErr]           = useState('');
+  const [zoneForm, setZoneForm] = useState({ code:'', name:'', city:'', description:'' });
+
+  const load = () => {
     api.get('/admin/zones').then(r => { setZones(r.data); setLoading(false); }).catch(() => setLoading(false));
-  }, []);
+  };
+  useEffect(load, []);
+
+  const createZone = async (e) => {
+    e.preventDefault(); setErr(''); setSaving(true);
+    try {
+      await api.post('/admin/zones', zoneForm);
+      setZoneForm({ code:'', name:'', city:'', description:'' });
+      setShowForm(false);
+      load();
+    } catch(e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+    finally { setSaving(false); }
+  };
+
+  const toggleActive = async (z) => {
+    await api.put(`/admin/zones/${z.id}`, { active: z.active ? 0 : 1 });
+    load();
+  };
+
+  const addCluster = async (zoneId, e) => {
+    e.preventDefault(); setErr('');
+    const f = clusterForms[zoneId] || { code:'', name:'' };
+    try {
+      await api.post(`/admin/zones/${zoneId}/clusters`, f);
+      setClusterForms(p => ({ ...p, [zoneId]: { code:'', name:'' } }));
+      load();
+    } catch(e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+  };
+
+  // Group zones by city
+  const byCity = zones.reduce((acc, z) => {
+    (acc[z.city] = acc[z.city] || []).push(z);
+    return acc;
+  }, {});
+
   if (loading) return <Spinner />;
+
   return (
-    <div className="p-5 lg:p-8">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {zones.map(z => (
-          <div key={z.id} className="bg-white rounded-2xl border border-slate-200 p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <span className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center font-bold font-display text-lg">{z.code}</span>
-              <div>
-                <div className="font-semibold text-slate-900 text-sm">{z.name}</div>
-                <div className="text-xs text-slate-400">{z.city}</div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
-              <div><span className="font-medium text-slate-800">{z.total_properties||0}</span> Mali</div>
-              <div><span className="font-medium text-green-600">{z.approved_properties||0}</span> Idhinishwa</div>
-              <div><span className="font-medium text-blue-600">{z.verified_properties||0}</span> Thibitishwa</div>
-              <div><span className="font-medium text-primary">{z.total_rooms||0}</span> Vyumba</div>
-              <div><span className="font-medium text-amber-600">{z.occupied_rooms||0}</span> Vinavyokaliwa</div>
-              <div><span className="font-medium">{z.managers||0}</span> Wasimamizi</div>
-            </div>
-          </div>
-        ))}
+    <div className="p-5 lg:p-8 space-y-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-display font-bold text-xl text-slate-900">Kanda &amp; Maeneo</h2>
+          <p className="text-sm text-slate-500 mt-0.5">{zones.length} kanda · Tanzania nzima</p>
+        </div>
+        <button onClick={() => { setShowForm(v=>!v); setErr(''); }}
+          className="btn-primary text-sm gap-2">
+          <Plus size={15}/> Unda Kanda Mpya
+        </button>
       </div>
+
+      {/* Create zone form */}
+      {showForm && (
+        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-5">
+          <h3 className="font-display font-bold text-slate-900 mb-4">Kanda Mpya</h3>
+          <form onSubmit={createZone} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="label">Msimbo wa Kanda (k.m. AA, DOD)</label>
+              <input className="input" value={zoneForm.code} required maxLength={5}
+                onChange={e => setZoneForm(p=>({...p, code:e.target.value.toUpperCase()}))}
+                placeholder="k.m. AA" />
+            </div>
+            <div>
+              <label className="label">Jina la Kanda</label>
+              <input className="input" value={zoneForm.name} required
+                onChange={e => setZoneForm(p=>({...p, name:e.target.value}))}
+                placeholder="k.m. NM-AIST / ATC / Njiro" />
+            </div>
+            <div>
+              <label className="label">Mji / Mkoa</label>
+              <input className="input" value={zoneForm.city} required
+                onChange={e => setZoneForm(p=>({...p, city:e.target.value}))}
+                placeholder="k.m. Arusha" />
+            </div>
+            <div>
+              <label className="label">Maelezo (hiari)</label>
+              <input className="input" value={zoneForm.description}
+                onChange={e => setZoneForm(p=>({...p, description:e.target.value}))}
+                placeholder="Maelezo mafupi ya kanda" />
+            </div>
+            {err && <div className="sm:col-span-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{err}</div>}
+            <div className="sm:col-span-2 flex gap-3">
+              <button type="submit" disabled={saving} className="btn-primary text-sm">
+                {saving ? <Loader2 size={14} className="animate-spin"/> : <Plus size={14}/>} Unda Kanda
+              </button>
+              <button type="button" onClick={()=>setShowForm(false)} className="btn-ghost text-sm">Ghairi</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Zones grouped by city */}
+      {Object.entries(byCity).map(([city, cityZones]) => (
+        <div key={city}>
+          <div className="flex items-center gap-2 mb-3">
+            <Globe size={15} className="text-accent-600"/>
+            <h3 className="font-display font-bold text-slate-700">{city}</h3>
+            <span className="text-xs text-slate-400">({cityZones.length} kanda)</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {cityZones.map(z => {
+              const isOpen = expanded[z.id];
+              const cf = clusterForms[z.id] || { code:'', name:'' };
+              return (
+                <div key={z.id} className={`bg-white rounded-2xl border ${z.active ? 'border-slate-200' : 'border-slate-100 opacity-60'} shadow-sm`}>
+                  {/* Zone header */}
+                  <div className="p-4">
+                    <div className="flex items-center gap-3 mb-3">
+                      <span className="min-w-[40px] h-10 px-2 rounded-xl bg-primary text-white flex items-center justify-center font-bold font-display text-sm">
+                        {z.code}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-900 text-sm truncate">{z.name}</div>
+                        <div className="text-xs text-slate-400">{z.city}</div>
+                      </div>
+                      <button onClick={() => toggleActive(z)}
+                        title={z.active ? 'Ficha kanda' : 'Asha kanda'}
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs transition-colors ${z.active ? 'bg-green-50 text-green-600 hover:bg-red-50 hover:text-red-500' : 'bg-slate-100 text-slate-400 hover:bg-green-50 hover:text-green-600'}`}>
+                        {z.active ? <Check size={13}/> : <XCircle size={13}/>}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs text-slate-500 mb-3">
+                      <div className="text-center"><div className="font-bold text-slate-800 text-base">{z.total_properties||0}</div>Mali</div>
+                      <div className="text-center"><div className="font-bold text-primary text-base">{z.total_rooms||0}</div>Vyumba</div>
+                      <div className="text-center"><div className="font-bold text-accent-600 text-base">{z.managers||0}</div>Wasimamizi</div>
+                    </div>
+                    {/* Toggle clusters */}
+                    <button onClick={() => setExpanded(p=>({...p,[z.id]:!p[z.id]}))}
+                      className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-700 transition-colors">
+                      <span>{(z.clusters||[]).length} Maeneo ya Kanda</span>
+                      <Chevron size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}/>
+                    </button>
+                  </div>
+
+                  {/* Clusters panel */}
+                  {isOpen && (
+                    <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-2">
+                      {(z.clusters||[]).map(c => (
+                        <div key={c.id} className="flex items-center justify-between text-xs">
+                          <span className="font-mono text-primary font-bold w-12">{c.code}</span>
+                          <span className="flex-1 text-slate-700">{c.name}</span>
+                          {!c.active && <span className="text-slate-400 text-[10px]">Imefungwa</span>}
+                        </div>
+                      ))}
+                      {/* Add cluster form */}
+                      <form onSubmit={e => addCluster(z.id, e)} className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
+                        <input className="input text-xs py-1.5 w-20 font-mono" value={cf.code} maxLength={6}
+                          onChange={e => setClusterForms(p=>({...p,[z.id]:{...cf,code:e.target.value.toUpperCase()}}))}
+                          placeholder="Msimbo" required/>
+                        <input className="input text-xs py-1.5 flex-1" value={cf.name}
+                          onChange={e => setClusterForms(p=>({...p,[z.id]:{...cf,name:e.target.value}}))}
+                          placeholder="Jina la eneo" required/>
+                        <button type="submit" className="btn-sm bg-primary text-white hover:bg-primary-600 shrink-0">
+                          <Plus size={12}/>
+                        </button>
+                      </form>
+                      {err && <p className="text-xs text-red-600">{err}</p>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
