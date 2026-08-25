@@ -3,8 +3,8 @@ import { MapPin, CheckCircle2, Clock, Building2 } from 'lucide-react';
 
 export default function PropertyCard({ property, onClick }) {
   const {
-    name, university_name, university_short, area, distance_km,
-    price_from, verified, main_photo, property_type, views_count,
+    name, university_name, university_short, area,
+    price_from, verified, main_photo, property_type, highlight,
   } = property;
 
   const fmt = (n) => n ? Number(n).toLocaleString('en-TZ') : '—';
@@ -44,10 +44,11 @@ export default function PropertyCard({ property, onClick }) {
       {/* Body */}
       <div className="p-4">
         <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider mb-1">{university_short || university_name}</p>
-        <h3 className="font-display font-bold text-slate-900 text-base leading-tight mb-2 group-hover:text-accent-600 transition-colors">{name}</h3>
+        <h3 className="font-display font-bold text-slate-900 text-base leading-tight mb-1 group-hover:text-accent-600 transition-colors">{name}</h3>
+        {highlight && <p className="text-xs text-slate-500 italic mb-1 line-clamp-1">{highlight}</p>}
         <div className="flex items-center gap-1 text-slate-500 text-xs mb-3">
           <MapPin size={12} className="shrink-0"/>
-          <span>{area}{distance_km ? ` · ${distance_km} km from campus` : ''}</span>
+          <span>{area}</span>
         </div>
         <div className="flex items-center justify-between border-t border-slate-100 pt-3">
           <div>

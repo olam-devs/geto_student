@@ -37,7 +37,11 @@ export default function FindRoom() {
     });
   }, [searchParams]);
 
-  useEffect(() => { api.get('/universities').then(r => setUnis(r.data)).catch(() => {}); }, []);
+  const [roomTypes, setRoomTypes] = useState(['Single','Shared','Double','Master','Bedsitter','Studio']);
+  useEffect(() => {
+    api.get('/universities').then(r => setUnis(r.data)).catch(() => {});
+    api.get('/admin/room-types').then(r => { if (r.data?.length) setRoomTypes(r.data.map(t => t.name)); }).catch(() => {});
+  }, []);
 
   const fetchProperties = useCallback(() => {
     setLoading(true);
@@ -53,7 +57,6 @@ export default function FindRoom() {
   const clearFilters = () => setFilters({ q:'', university_id:'', room_type:'', price_max:'', verified_only:'', area:'' });
   const activeCount = Object.values(filters).filter(Boolean).length;
 
-  const roomTypes = ['Single','Shared','Double','Master','Bedsitter','Studio'];
   const priceOptions = [
     { label: 'Under TZS 150,000', value: '150000' },
     { label: 'Under TZS 250,000', value: '250000' },

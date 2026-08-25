@@ -20,6 +20,7 @@ const ADMIN_ONLY_NAV = [
   { path: '/admin/zones',        icon: Map,           label: 'Kanda & Maeneo' },
   { path: '/admin/universities', icon: GraduationCap, label: 'Vyuo & Taasisi' },
   { path: '/admin/staff',        icon: Shield,        label: 'Wasimamizi wa Kanda' },
+  { path: '/admin/types',        icon: Plus,          label: 'Aina za Mali/Vyumba' },
 ];
 
 function Sidebar({ open, onClose }) {
@@ -255,6 +256,16 @@ function PropertiesList() {
     });
     load();
   };
+  const unverify = async (id) => {
+    if (!confirm('Ondoa badge ya "Geto Verified" kutoka mali hii?')) return;
+    await api.put(`/admin/properties/${id}/unverify`);
+    load();
+  };
+  const deleteProp = async (id) => {
+    if (!confirm('Futa mali hii kabisa? Hatua hii haiwezi kurudishwa.')) return;
+    await api.delete(`/admin/properties/${id}`);
+    load();
+  };
 
   return (
     <div className="p-5 lg:p-8">
@@ -300,6 +311,10 @@ function PropertiesList() {
                 {p.status === 'approved' && !p.verified && (
                   <button onClick={() => verify(p.id)} className="btn-sm bg-primary text-white hover:bg-primary/80"><Shield size={13}/>Thibitisha</button>
                 )}
+                {p.verified && (
+                  <button onClick={() => unverify(p.id)} className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Ondoa Uthibitisho</button>
+                )}
+                <button onClick={() => deleteProp(p.id)} className="btn-sm border border-red-200 text-red-500 hover:bg-red-50"><Trash2 size={13}/></button>
                 <Link to={`/admin/properties/${p.id}`} className="btn-sm border border-slate-200 text-slate-600 hover:border-primary hover:text-primary"><Eye size={13}/>Angalia</Link>
               </div>
             </div>
@@ -331,16 +346,23 @@ function AddPropertyModal({ onClose, onSaved }) {
 
   const [f, setF] = useState({
     name:'', property_type:'Hostel', description:'', address:'', landmark:'', area:'',
-    distance_km:'', nearest_university_id:'', zone_id:'', cluster_id:'', youtube_video_id:'',
+    highlight:'', nearest_university_id:'', zone_id:'', cluster_id:'', youtube_video_id:'',
   });
   const [rf, setRf] = useState({
-    room_type:'Single', monthly_price:'', deposit:'', capacity:'1',
-    total_count:'1', furnished:false, bathroom_type:'Shared', description:'',
+    room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1',
+    total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared', description:'',
   });
 
+  const [pTypes, setPTypes] = useState([]);
+  const [rTypes, setRTypes] = useState([]);
+
   useEffect(() => {
-    Promise.all([api.get('/universities'), api.get('/zones')])
-      .then(([u, z]) => { setUnis(u.data); setZones(z.data); });
+    Promise.all([api.get('/universities'), api.get('/zones'), api.get('/admin/property-types'), api.get('/admin/room-types')])
+      .then(([u, z, pt, rt]) => { setUnis(u.data); setZones(z.data); setPTypes(pt.data); setRTypes(rt.data); })
+      .catch(() => {
+        api.get('/universities').then(u => setUnis(u.data)).catch(() => {});
+        api.get('/zones').then(z => setZones(z.data)).catch(() => {});
+      });
   }, []);
 
   useEffect(() => {
@@ -403,10 +425,11 @@ function AddPropertyModal({ onClose, onSaved }) {
   const addRoom = async (e) => {
     e.preventDefault(); setErr(''); setSaving(true);
     try {
-      await api.post(`/admin/properties/${propId}/rooms`, rf);
+      const payload = { ...rf, occupied_count: Math.max(0, (rf.total_count||1) - (rf.available_count||rf.total_count||1)) };
+      await api.post(`/admin/properties/${propId}/rooms`, payload);
       const r = await api.get(`/admin/properties/${propId}`);
       setRooms(r.data.rooms || []);
-      setRf({ room_type:'Single', monthly_price:'', deposit:'', capacity:'1', total_count:'1', furnished:false, bathroom_type:'Shared', description:'' });
+      setRf({ room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared', description:'' });
     } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
     finally { setSaving(false); }
   };
@@ -417,8 +440,8 @@ function AddPropertyModal({ onClose, onSaved }) {
   };
 
   const fmt = n => Number(n).toLocaleString('en-TZ');
-  const TYPES = ['Nyumzba ya Vyumba','Hostel','Apartment','Bedsitter','Studio','Shared House','Student Residence','Other'];
-  const RTYPES = ['Single','Double','Shared','Master','Bedsitter','Studio'];
+  const TYPES  = pTypes.length ? pTypes.map(t => t.name) : ['Nyumba ya Vyumba','Hostel','Apartment','Bedsitter','Studio','Shared House','Student Residence','Other'];
+  const RTYPES = rTypes.length ? rTypes.map(t => t.name) : ['Single','Double','Shared','Master','Bedsitter','Studio'];
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -496,9 +519,9 @@ function AddPropertyModal({ onClose, onSaved }) {
                   <label className="label">Eneo (Area)</label>
                   <input className="input" value={f.area} onChange={e=>setF(p=>({...p,area:e.target.value}))} placeholder="k.m. Ubungo" />
                 </div>
-                <div>
-                  <label className="label">Umbali wa Chuo (km)</label>
-                  <input className="input" type="number" step="0.1" value={f.distance_km} onChange={e=>setF(p=>({...p,distance_km:e.target.value}))} placeholder="0.5" />
+                <div className="col-span-2">
+                  <label className="label">Highlight (hiari — muhtasari mfupi utakaoonekana kwenye kadi)</label>
+                  <input className="input" value={f.highlight} onChange={e=>setF(p=>({...p,highlight:e.target.value}))} placeholder="k.m. Karibu na chuo, umeme wa jua, maji kila wakati" />
                 </div>
                 <div className="col-span-2">
                   <label className="label">Anwani</label>
@@ -635,13 +658,19 @@ function AddPropertyModal({ onClose, onSaved }) {
                     <label className="label">Bei/mwezi (TZS) *</label>
                     <input className="input" type="number" value={rf.monthly_price} onChange={e=>setRf(p=>({...p,monthly_price:e.target.value}))} required placeholder="150000" />
                   </div>
-                  <div>
-                    <label className="label">Amana (TZS)</label>
-                    <input className="input" type="number" value={rf.deposit} onChange={e=>setRf(p=>({...p,deposit:e.target.value}))} placeholder="0" />
+                  <div className="col-span-2">
+                    <label className="label">Amana / Maelezo (hiari)</label>
+                    <input className="input" value={rf.deposit_note} onChange={e=>setRf(p=>({...p,deposit_note:e.target.value}))} placeholder="k.m. Miezi 3 ya kodi kabla ya kuingia" />
                   </div>
                   <div>
-                    <label className="label">Idadi ya Vyumba</label>
-                    <input className="input" type="number" min="1" value={rf.total_count} onChange={e=>setRf(p=>({...p,total_count:e.target.value}))} />
+                    <label className="label">Vyumba Vyote (jumla)</label>
+                    <input className="input" type="number" min="1" value={rf.total_count}
+                      onChange={e=>setRf(p=>({...p,total_count:e.target.value,available_count:e.target.value}))} />
+                  </div>
+                  <div>
+                    <label className="label">Vyumba Vilivyobaki (vilivyo huru)</label>
+                    <input className="input" type="number" min="0" value={rf.available_count}
+                      onChange={e=>setRf(p=>({...p,available_count:e.target.value}))} />
                   </div>
                   <div>
                     <label className="label">Nafasi kwa Chumba</label>
@@ -674,6 +703,99 @@ function AddPropertyModal({ onClose, onSaved }) {
   );
 }
 
+// ─── Room row with inline photo/video management ─────────────
+function RoomRow({ r, fmt, onEdit, onDel, onReload }) {
+  const [open, setOpen] = useState(false);
+  const [videoId, setVideoId] = useState('');
+  const [videoTitle, setVideoTitle] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const fileRef = React.useRef();
+
+  const uploadPhotos = async (files) => {
+    if (!files.length) return;
+    setUploading(true);
+    const fd = new FormData();
+    for (const f of files) fd.append('photos[]', f);
+    try { await api.post(`/admin/rooms/${r.id}/photos`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }); onReload(); }
+    catch (e) { alert(e.response?.data?.message || 'Upload failed.'); }
+    finally { setUploading(false); }
+  };
+
+  const addVideo = async () => {
+    if (!videoId.trim()) return;
+    await api.post(`/admin/rooms/${r.id}/videos`, { youtube_video_id: videoId.trim(), title: videoTitle.trim() });
+    setVideoId(''); setVideoTitle(''); onReload();
+  };
+
+  return (
+    <div className="border-b border-slate-100 last:border-0">
+      <div className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
+        <div>
+          <span className="font-semibold text-sm text-slate-800">{r.room_type}</span>
+          <span className="text-xs text-slate-400 ml-2">· {r.furnished?'Furnished':'Unfurnished'} · {r.bathroom_type} bath · Nafasi {r.capacity}</span>
+          <div className="text-xs text-slate-500 mt-0.5">
+            <span className="font-semibold text-primary">TZS {fmt(r.monthly_price)}/mo</span>
+            {r.deposit_note && <span className="ml-2 text-slate-400">· {r.deposit_note}</span>}
+            <span className="ml-2">· {(r.available??r.available_count??r.total_count)} / {r.total_count} huru</span>
+            <button onClick={() => setOpen(v=>!v)} className="ml-3 text-accent-600 hover:underline text-[11px]">
+              {(r.photos?.length||0)} picha · {(r.videos?.length||0)} video {open?'▲':'▼'}
+            </button>
+          </div>
+        </div>
+        <div className="flex gap-1 shrink-0">
+          <button onClick={() => onEdit(r)} className="p-1.5 text-slate-400 hover:text-primary"><Pencil size={13}/></button>
+          <button onClick={() => onDel(r.id)} className="p-1.5 text-slate-400 hover:text-red-500"><Trash2 size={13}/></button>
+        </div>
+      </div>
+      {open && (
+        <div className="bg-slate-50 px-4 py-3 space-y-3">
+          {/* Photos */}
+          <div>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {(r.photos||[]).map(ph => (
+                <div key={ph.id} className="relative group">
+                  <img src={ph.url} alt="" className="w-20 h-16 object-cover rounded-lg border border-slate-200"/>
+                  <button onClick={async()=>{await api.delete(`/admin/room-photos/${ph.id}`);onReload();}}
+                    className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs hidden group-hover:flex items-center justify-center">×</button>
+                </div>
+              ))}
+              <button onClick={() => fileRef.current?.click()}
+                className="w-20 h-16 rounded-lg border-2 border-dashed border-slate-300 hover:border-primary text-slate-400 hover:text-primary text-2xl flex items-center justify-center">
+                {uploading ? <Loader2 size={16} className="animate-spin"/> : '+'}
+              </button>
+              <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
+                onChange={e => uploadPhotos(Array.from(e.target.files))} />
+            </div>
+          </div>
+          {/* Videos */}
+          <div>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {(r.videos||[]).map(v => (
+                <div key={v.id} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs">
+                  <span className="text-primary font-mono">{v.youtube_video_id}</span>
+                  {v.title && <span className="text-slate-400">— {v.title}</span>}
+                  <button onClick={async()=>{await api.delete(`/admin/room-videos/${v.id}`);onReload();}} className="text-red-400 hover:text-red-600 ml-1">×</button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 items-end">
+              <div>
+                <label className="label text-[10px]">YouTube Video ID</label>
+                <input className="input text-xs py-1" value={videoId} onChange={e=>setVideoId(e.target.value)} placeholder="dQw4w9WgXcQ" style={{width:'130px'}}/>
+              </div>
+              <div>
+                <label className="label text-[10px]">Kichwa (hiari)</label>
+                <input className="input text-xs py-1" value={videoTitle} onChange={e=>setVideoTitle(e.target.value)} placeholder="Tour ya chumba" style={{width:'140px'}}/>
+              </div>
+              <button onClick={addVideo} disabled={!videoId.trim()} className="btn-sm bg-accent text-white text-xs mb-0.5">+ Video</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Property Detail (staff)
 function PropertyDetail() {
   const { id } = useLocation().state || {};
@@ -687,7 +809,7 @@ function PropertyDetail() {
   const [addRoomOpen, setAddRoom] = useState(false);
   const [editRoom, setEditRoom]   = useState(null);
   const [saving, setSaving]       = useState(false);
-  const [rf, setRf] = useState({ room_type:'Single', monthly_price:'', deposit:'', capacity:'1', total_count:'1', furnished:false, bathroom_type:'Shared' });
+  const [rf, setRf] = useState({ room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared' });
 
   const load = useCallback(() => {
     setLoading(true);
@@ -699,15 +821,23 @@ function PropertyDetail() {
   useEffect(() => { load(); }, [load]);
 
   const fmt = n => Number(n||0).toLocaleString('en-TZ');
-  const RTYPES = ['Single','Double','Shared','Master','Bedsitter','Studio'];
+  const [rTypes, setRTypes]   = useState([]);
+  const [pTypes, setPTypes]   = useState([]);
+  const [deleting, setDeleting] = useState(false);
+  useEffect(() => {
+    Promise.all([api.get('/admin/room-types'), api.get('/admin/property-types')])
+      .then(([rt, pt]) => { setRTypes(rt.data); setPTypes(pt.data); }).catch(() => {});
+  }, []);
+  const RTYPES = rTypes.length ? rTypes.map(t => t.name) : ['Single','Double','Shared','Master','Bedsitter','Studio'];
 
   const saveRoom = async (e) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
+      const payload = { ...rf, occupied_count: Math.max(0, Number(rf.total_count||1) - Number(rf.available_count||rf.total_count||1)) };
       if (editRoom) {
-        await api.put(`/admin/rooms/${editRoom.id}`, rf);
+        await api.put(`/admin/rooms/${editRoom.id}`, payload);
       } else {
-        await api.post(`/admin/properties/${propId}/rooms`, rf);
+        await api.post(`/admin/properties/${propId}/rooms`, payload);
       }
       setAddRoom(false); setEditRoom(null);
       load();
@@ -716,9 +846,11 @@ function PropertyDetail() {
   };
 
   const startEdit = (r) => {
-    setRf({ room_type:r.room_type, monthly_price:r.monthly_price, deposit:r.deposit||'',
-            capacity:r.capacity, total_count:r.total_count, furnished:!!r.furnished,
-            bathroom_type:r.bathroom_type });
+    const avail = r.available !== undefined ? r.available : (r.total_count - (r.occupied_count||0));
+    setRf({ room_type:r.room_type, monthly_price:r.monthly_price,
+            deposit_note:r.deposit_note||'', capacity:r.capacity,
+            total_count:r.total_count, available_count: avail,
+            furnished:!!r.furnished, bathroom_type:r.bathroom_type });
     setEditRoom(r); setAddRoom(true);
   };
 
@@ -742,9 +874,17 @@ function PropertyDetail() {
           <h2 className="font-display font-bold text-xl text-slate-900">{prop.name}</h2>
           <p className="text-sm text-slate-500 mt-0.5">{prop.area} · {prop.university_name} · Kanda {prop.zone_code||'—'}</p>
         </div>
-        <div className="flex gap-2 shrink-0">
+        <div className="flex flex-wrap gap-2 shrink-0">
           <StatusBadge status={prop.status} />
-          {prop.verified && <span className="badge-green">Imethibitishwa</span>}
+          {prop.verified
+            ? <button onClick={async()=>{if(!confirm('Ondoa badge ya "Geto Verified"?'))return;await api.put(`/admin/properties/${propId}/unverify`);load();}}
+                className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Ondoa Uthibitisho</button>
+            : prop.status==='approved' && <button onClick={async()=>{if(!confirm('Thibitisha mali hii?'))return;await api.put(`/admin/properties/${propId}/verify`,{checklist:{owner_identity:1,location_confirmed:1,rooms_confirmed:1,water_confirmed:1,electricity_confirmed:1,security_confirmed:1,price_confirmed:1}});load();}}
+                className="btn-sm bg-primary text-white hover:bg-primary/80"><Shield size={13}/>Thibitisha</button>
+          }
+          <button onClick={async()=>{if(!confirm('Futa mali hii kabisa? Hatua hii haiwezi kurudishwa.'))return;setDeleting(true);try{await api.delete(`/admin/properties/${propId}`);navigate('/admin/properties');}catch{setDeleting(false);}}}
+            disabled={deleting}
+            className="btn-sm bg-red-600 text-white hover:bg-red-700"><Trash2 size={13}/>{deleting?'…':'Futa Mali'}</button>
         </div>
       </div>
 
@@ -754,8 +894,8 @@ function PropertyDetail() {
           <h4 className="font-semibold text-slate-800 text-sm mb-3">Maelezo ya Mali</h4>
           <div className="text-xs space-y-1.5 text-slate-600">
             <div><span className="text-slate-400">Aina:</span> {prop.property_type}</div>
-            <div><span className="text-slate-400">Anwani:</span> {prop.address}</div>
-            <div><span className="text-slate-400">Umbali:</span> {prop.distance_km ? `${prop.distance_km} km` : '—'}</div>
+            <div><span className="text-slate-400">Anwani:</span> {prop.address||'—'}</div>
+            {prop.highlight && <div><span className="text-slate-400">Highlight:</span> <em>{prop.highlight}</em></div>}
             <div><span className="text-slate-400">Chuo:</span> {prop.university_name}</div>
             <div><span className="text-slate-400">Kanda:</span> {prop.zone_code} — {prop.zone_name}</div>
           </div>
@@ -776,7 +916,7 @@ function PropertyDetail() {
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <h4 className="font-semibold text-slate-800 text-sm">Aina za Vyumba ({prop.rooms?.length || 0})</h4>
-          <button onClick={() => { setEditRoom(null); setRf({ room_type:'Single', monthly_price:'', deposit:'', capacity:'1', total_count:'1', furnished:false, bathroom_type:'Shared' }); setAddRoom(v=>!v); }}
+          <button onClick={() => { setEditRoom(null); setRf({ room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared' }); setAddRoom(v=>!v); }}
             className="btn-sm bg-primary text-white hover:bg-primary/90"><Plus size={13}/>Ongeza Chumba</button>
         </div>
 
@@ -795,13 +935,19 @@ function PropertyDetail() {
                 <label className="label">Bei/mwezi (TZS)</label>
                 <input className="input" type="number" value={rf.monthly_price} onChange={e=>setRf(p=>({...p,monthly_price:e.target.value}))} required />
               </div>
-              <div>
-                <label className="label">Amana (TZS)</label>
-                <input className="input" type="number" value={rf.deposit} onChange={e=>setRf(p=>({...p,deposit:e.target.value}))} />
+              <div className="col-span-2 sm:col-span-3">
+                <label className="label">Amana / Maelezo (hiari)</label>
+                <input className="input" value={rf.deposit_note} onChange={e=>setRf(p=>({...p,deposit_note:e.target.value}))} placeholder="k.m. Miezi 3 ya kodi kabla ya kuingia" />
               </div>
               <div>
-                <label className="label">Idadi Vyumba</label>
-                <input className="input" type="number" min="1" value={rf.total_count} onChange={e=>setRf(p=>({...p,total_count:e.target.value}))} />
+                <label className="label">Vyumba Vyote</label>
+                <input className="input" type="number" min="1" value={rf.total_count}
+                  onChange={e=>setRf(p=>({...p,total_count:e.target.value, available_count: e.target.value}))} />
+              </div>
+              <div>
+                <label className="label">Vilivyobaki (huru)</label>
+                <input className="input" type="number" min="0" value={rf.available_count}
+                  onChange={e=>setRf(p=>({...p,available_count:e.target.value}))} />
               </div>
               <div>
                 <label className="label">Nafasi/Chumba</label>
@@ -826,26 +972,12 @@ function PropertyDetail() {
           </form>
         )}
 
-        <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+        <div className="border border-slate-200 rounded-xl overflow-hidden">
           {(!prop.rooms || prop.rooms.length === 0) && (
             <div className="px-4 py-6 text-center text-slate-400 text-sm">Hakuna vyumba bado. Ongeza aina ya chumba.</div>
           )}
           {prop.rooms?.map(r => (
-            <div key={r.id} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
-              <div>
-                <span className="font-semibold text-sm text-slate-800">{r.room_type}</span>
-                <span className="text-xs text-slate-400 ml-2">· {r.furnished?'Furnished':'Unfurnished'} · {r.bathroom_type} bath · Nafasi {r.capacity}</span>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  <span className="font-semibold text-primary">TZS {fmt(r.monthly_price)}/mo</span>
-                  {r.deposit > 0 && <span className="ml-2 text-slate-400">Amana: {fmt(r.deposit)}</span>}
-                  <span className="ml-2">{r.available} / {r.total_count} nafasi zilizobaki</span>
-                </div>
-              </div>
-              <div className="flex gap-1 shrink-0">
-                <button onClick={() => startEdit(r)} className="p-1.5 text-slate-400 hover:text-primary"><Pencil size={13}/></button>
-                <button onClick={() => delRoom(r.id)} className="p-1.5 text-slate-400 hover:text-red-500"><Trash2 size={13}/></button>
-              </div>
-            </div>
+            <RoomRow key={r.id} r={r} fmt={fmt} onEdit={startEdit} onDel={delRoom} onReload={load} />
           ))}
         </div>
       </div>
@@ -1397,6 +1529,75 @@ function StaffView() {
   );
 }
 
+// ─── Types Manager (admin: manage property_types and room_types) ─
+function TypesView() {
+  const [pTypes, setPTypes] = useState([]);
+  const [rTypes, setRTypes] = useState([]);
+  const [newPType, setNewPType] = useState('');
+  const [newRType, setNewRType] = useState('');
+
+  const load = useCallback(async () => {
+    const [pt, rt] = await Promise.all([api.get('/admin/property-types'), api.get('/admin/room-types')]);
+    setPTypes(pt.data); setRTypes(rt.data);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addPType = async () => {
+    if (!newPType.trim()) return;
+    await api.post('/admin/property-types', { name: newPType.trim() });
+    setNewPType(''); load();
+  };
+  const delPType = async (id) => { await api.delete(`/admin/property-types/${id}`); load(); };
+  const addRType = async () => {
+    if (!newRType.trim()) return;
+    await api.post('/admin/room-types', { name: newRType.trim() });
+    setNewRType(''); load();
+  };
+  const delRType = async (id) => { await api.delete(`/admin/room-types/${id}`); load(); };
+
+  return (
+    <div className="p-5 lg:p-8 space-y-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Property Types */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <h3 className="font-display font-bold text-slate-900 mb-4">Aina za Mali</h3>
+          <div className="flex gap-2 mb-4">
+            <input className="input flex-1 text-sm" value={newPType} onChange={e=>setNewPType(e.target.value)}
+              placeholder="Ongeza aina mpya…" onKeyDown={e=>e.key==='Enter'&&addPType()} />
+            <button onClick={addPType} className="btn-sm bg-primary text-white"><Plus size={14}/></button>
+          </div>
+          <div className="space-y-1">
+            {pTypes.map(t => (
+              <div key={t.id} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-xl text-sm">
+                <span className="text-slate-700">{t.name}</span>
+                <button onClick={() => delPType(t.id)} className="text-red-400 hover:text-red-600"><Trash2 size={13}/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Room Types */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <h3 className="font-display font-bold text-slate-900 mb-4">Aina za Vyumba</h3>
+          <div className="flex gap-2 mb-4">
+            <input className="input flex-1 text-sm" value={newRType} onChange={e=>setNewRType(e.target.value)}
+              placeholder="Ongeza aina mpya…" onKeyDown={e=>e.key==='Enter'&&addRType()} />
+            <button onClick={addRType} className="btn-sm bg-primary text-white"><Plus size={14}/></button>
+          </div>
+          <div className="space-y-1">
+            {rTypes.map(t => (
+              <div key={t.id} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-xl text-sm">
+                <span className="text-slate-700">{t.name}</span>
+                <button onClick={() => delRType(t.id)} className="text-red-400 hover:text-red-600"><Trash2 size={13}/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Shared helpers ────────────────────────────────────────────
 function Spinner() {
   return <div className="flex items-center justify-center p-16 text-primary"><Loader2 size={32} className="animate-spin"/></div>;
@@ -1436,6 +1637,7 @@ export default function AdminPortal() {
           {isAdmin && <Route path="zones"         element={<ZonesView />} />}
           {isAdmin && <Route path="universities"  element={<UniversitiesView />} />}
           {isAdmin && <Route path="staff"         element={<StaffView />} />}
+          {isAdmin && <Route path="types"         element={<TypesView />} />}
         </Routes>
       </div>
     </div>

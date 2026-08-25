@@ -122,18 +122,13 @@ export default function Home() {
               {/* Stats */}
               <div className="flex flex-wrap items-center gap-6 sm:gap-10 mb-8">
                 <div>
-                  <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{propCount || 500}+</p>
+                  <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">200+</p>
                   <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Vyumba</p>
                 </div>
                 <div className="w-px h-12 bg-slate-200"/>
                 <div>
                   <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{universities.length || 30}+</p>
                   <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Vyuo Vikuu</p>
-                </div>
-                <div className="w-px h-12 bg-slate-200"/>
-                <div>
-                  <p className="font-display font-extrabold text-4xl text-accent-600 leading-none">2024</p>
-                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Tulianzisha</p>
                 </div>
               </div>
 
@@ -160,13 +155,29 @@ export default function Home() {
               </div>
             </div>
 
-            {/* ── Right: 4-photo animated grid ── */}
+            {/* ── Right: overlapping/rotated photo cards ── */}
             <div className="order-1 lg:order-2">
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                <PhotoCell photos={PHOTO_SETS[0]} interval={INTERVALS[0]}/>
-                <PhotoCell photos={PHOTO_SETS[1]} interval={INTERVALS[1]} badge/>
-                <PhotoCell photos={PHOTO_SETS[2]} interval={INTERVALS[2]}/>
-                <PhotoCell photos={PHOTO_SETS[3]} interval={INTERVALS[3]}/>
+              <div className="relative" style={{ height: '400px' }}>
+                {/* Card A — back-left, rotated negative */}
+                <div className="absolute rounded-2xl overflow-hidden shadow-xl"
+                  style={{ top: 0, left: 0, width: '72%', height: '52%', transform: 'rotate(-5deg)', zIndex: 1 }}>
+                  <PhotoCell photos={PHOTO_SETS[3]} interval={INTERVALS[3]}/>
+                </div>
+                {/* Card B — back-right, rotated positive */}
+                <div className="absolute rounded-2xl overflow-hidden shadow-xl"
+                  style={{ top: '10px', right: 0, width: '64%', height: '48%', transform: 'rotate(4deg)', zIndex: 2 }}>
+                  <PhotoCell photos={PHOTO_SETS[2]} interval={INTERVALS[2]}/>
+                </div>
+                {/* Card C — front-left, slight negative tilt */}
+                <div className="absolute rounded-2xl overflow-hidden shadow-2xl"
+                  style={{ bottom: '10px', left: 0, width: '68%', height: '55%', transform: 'rotate(-2deg)', zIndex: 3 }}>
+                  <PhotoCell photos={PHOTO_SETS[0]} interval={INTERVALS[0]} badge/>
+                </div>
+                {/* Card D — front-right, slight positive tilt */}
+                <div className="absolute rounded-2xl overflow-hidden shadow-2xl"
+                  style={{ bottom: 0, right: 0, width: '60%', height: '50%', transform: 'rotate(3deg)', zIndex: 4 }}>
+                  <PhotoCell photos={PHOTO_SETS[1]} interval={INTERVALS[1]}/>
+                </div>
               </div>
 
               {/* Floating verified bar below grid */}

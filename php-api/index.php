@@ -444,7 +444,7 @@ function routeProperties(array $parts, string $method): void {
 
     // GET /api/properties — public listing / search
     if ($method === 'GET' && !$id) {
-        $sql = "SELECT p.id,p.name,p.property_type,p.area,p.landmark,p.distance_km,p.transport_options,
+        $sql = "SELECT p.id,p.name,p.property_type,p.area,p.landmark,p.highlight,p.transport_options,
                        p.verified,p.youtube_video_id,p.views_count,p.created_at,
                        p.nearest_university_id,u.name AS university_name,u.short_name AS university_short,
                        z.code AS zone_code,z.name AS zone_name,c.code AS cluster_code,c.name AS cluster_name,
@@ -841,19 +841,6 @@ function routeStudent(array $parts, string $method): void {
         $bid = qx("INSERT INTO bookings (student_id,property_id,room_id,owner_id,move_in_date,move_in_notes,status)
                    VALUES (?,?,?,?,?,?,'pending')",
                   [$u['id'],$b['property_id'],$b['room_id'],$prop['owner_id'],$b['move_in_date'],$b['notes']??null]);
-        // Notify admin via SMS (max SMS_ADMIN_MAX_DAY per day)
-        if (adminBookingSmsCountToday() < (defined('SMS_ADMIN_MAX_DAY') ? SMS_ADMIN_MAX_DAY : 3)) {
-            $adminPhone = getAdminPhone();
-            if ($adminPhone) {
-                $zone  = q1("SELECT z.code FROM properties p LEFT JOIN zones z ON z.id=p.zone_id WHERE p.id=?", [(int)$b['property_id']]);
-                $zCode = $zone['code'] ?? '?';
-                $today = q1("SELECT COUNT(*) AS cnt FROM bookings WHERE DATE(created_at)=CURDATE()");
-                $total = (int)($today['cnt'] ?? 0);
-                sendSMS($adminPhone,
-                    "GETO: Booking mpya! Kanda {$zCode} - jumla leo: {$total}. Mali: {$prop['name']}. Ingia portal kukagua.",
-                    "booking-$bid");
-            }
-        }
         created(['message'=>'Ombi la uhifadhi limetumwa.','bookingId'=>$bid]);
     }
 
@@ -1015,6 +1002,10 @@ function routeAdmin(array $parts, string $method): void {
         $photos    = q('SELECT * FROM property_photos WHERE property_id=? ORDER BY is_main DESC,sort_order', [$pid]);
         $amenities = q('SELECT a.* FROM amenities a JOIN property_amenities pa ON pa.amenity_id=a.id WHERE pa.property_id=?', [$pid]);
         $rooms     = q('SELECT *,(total_count-occupied_count) AS available FROM rooms WHERE property_id=? ORDER BY monthly_price', [$pid]);
+        foreach ($rooms as &$rm) {
+            $rm['photos'] = q('SELECT id,url,is_main,sort_order FROM room_photos WHERE room_id=? ORDER BY is_main DESC,sort_order', [$rm['id']]);
+            $rm['videos'] = q('SELECT id,youtube_video_id,title FROM room_videos WHERE room_id=?', [$rm['id']]);
+        } unset($rm);
         $tenants   = q("SELECT t.*,r.room_type FROM tenants t JOIN rooms r ON r.id=t.room_id WHERE t.property_id=?", [$pid]);
         $verif     = q1('SELECT * FROM verification_records WHERE property_id=?', [$pid]);
         $manager   = q1("SELECT u.id,u.name,u.email,u.phone FROM property_manager_assignments pma JOIN users u ON u.id=pma.manager_id WHERE pma.property_id=? AND pma.is_active=1", [$pid]);
@@ -1031,10 +1022,10 @@ function routeAdmin(array $parts, string $method): void {
         $ownerId = !empty($b['owner_id']) ? (int)$b['owner_id'] : (int)$u['id'];
         // Admin → auto-approved; zone_manager → pending (needs admin review)
         $status = $isAdmin ? 'approved' : 'pending';
-        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,distance_km,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,status,created_by,created_by_role) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,highlight,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,status,created_by,created_by_role) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [$b['name'], $b['property_type']??'Hostel', $b['description']??'',
              $b['address']??'', $b['landmark']??null, $b['area']??'',
-             !empty($b['distance_km']) ? (float)$b['distance_km'] : null,
+             !empty($b['highlight']) ? $b['highlight'] : null,
              (int)$b['nearest_university_id'], $zid, $cid,
              $ownerId, $b['youtube_video_id']??null, $status,
              (int)$u['id'], $u['role']]);
@@ -1063,9 +1054,11 @@ function routeAdmin(array $parts, string $method): void {
         $pid = (int)$sub2;
         $b = body();
         if (empty($b['room_type']) || empty($b['monthly_price'])) err(400, 'Room type and price required.');
-        $rid = qx('INSERT INTO rooms (property_id,room_type,monthly_price,deposit,capacity,total_count,occupied_count,furnished,bathroom_type,description) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            [$pid, $b['room_type'], (int)$b['monthly_price'], (int)($b['deposit']??0),
-             (int)($b['capacity']??1), (int)($b['total_count']??1), 0,
+        $total = (int)($b['total_count']??1);
+        $occ   = isset($b['occupied_count']) ? (int)$b['occupied_count'] : 0;
+        $rid = qx('INSERT INTO rooms (property_id,room_type,monthly_price,deposit_note,capacity,total_count,occupied_count,furnished,bathroom_type,description) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [$pid, $b['room_type'], (int)$b['monthly_price'], $b['deposit_note']??null,
+             (int)($b['capacity']??1), $total, $occ,
              (int)($b['furnished']??0), $b['bathroom_type']??'Shared', $b['description']??null]);
         ok(['id'=>$rid]);
     }
@@ -1075,7 +1068,7 @@ function routeAdmin(array $parts, string $method): void {
         $rid = (int)$sub2;
         $b = body();
         $fields=[]; $params=[];
-        foreach (['room_type','monthly_price','deposit','capacity','total_count','occupied_count','furnished','bathroom_type','description'] as $f)
+        foreach (['room_type','monthly_price','deposit_note','capacity','total_count','occupied_count','furnished','bathroom_type','description'] as $f)
             if (array_key_exists($f,$b)) { $fields[]="$f=?"; $params[]=$b[$f]; }
         if ($fields) { $params[]=$rid; qn('UPDATE rooms SET '.implode(',',$fields).' WHERE id=?',$params); }
         ok(['updated'=>true]);
@@ -1083,7 +1076,65 @@ function routeAdmin(array $parts, string $method): void {
 
     // ── DELETE /api/admin/rooms/:room_id — remove a room type ─
     if ($method === 'DELETE' && $sub === 'rooms' && is_numeric($sub2)) {
-        qn('DELETE FROM rooms WHERE id=?', [(int)$sub2]);
+        $rid2 = (int)$sub2;
+        qn('DELETE FROM room_photos WHERE room_id=?', [$rid2]);
+        qn('DELETE FROM room_videos WHERE room_id=?', [$rid2]);
+        qn('DELETE FROM rooms WHERE id=?', [$rid2]);
+        ok(['deleted'=>true]);
+    }
+
+    // ── POST /api/admin/rooms/:id/photos — upload room photos ─
+    if ($method === 'POST' && $sub === 'rooms' && is_numeric($sub2) && $sub3 === 'photos') {
+        $rid2 = (int)$sub2;
+        if (empty($_FILES['photos'])) err(400, 'No photos uploaded.');
+        $docroot = rtrim($_SERVER['DOCUMENT_ROOT'], '/');
+        $dir = "$docroot/uploads/rooms/$rid2";
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+        $files = $_FILES['photos'];
+        if (!is_array($files['name'])) $files = array_map(fn($v) => [$v], $files);
+        $count = count($files['name']); $saved = [];
+        $maxB  = MAX_FILE_MB * 1024 * 1024;
+        for ($i = 0; $i < $count; $i++) {
+            if ($files['error'][$i] !== UPLOAD_ERR_OK) continue;
+            if ($files['size'][$i] > $maxB || !str_starts_with($files['type'][$i], 'image/')) continue;
+            $name = preg_replace('/\.[^.]+$/', '', basename($files['name'][$i])).'_'.time().$i.'.webp';
+            $dest = "$dir/$name";
+            try { toWebP($files['tmp_name'][$i], $dest); }
+            catch (Exception) { move_uploaded_file($files['tmp_name'][$i], $dest); }
+            $isMain = empty(q('SELECT id FROM room_photos WHERE room_id=?', [$rid2])) ? 1 : 0;
+            $ord = count($saved);
+            qx('INSERT INTO room_photos (room_id,url,is_main,sort_order) VALUES (?,?,?,?)',
+               [$rid2, "/uploads/rooms/$rid2/$name", $isMain, $ord]);
+            $saved[] = "/uploads/rooms/$rid2/$name";
+        }
+        ok(['uploaded'=>count($saved),'photos'=>$saved]);
+    }
+
+    // ── DELETE /api/admin/room-photos/:id ─────────────────────
+    if ($method === 'DELETE' && $sub === 'room-photos' && is_numeric($sub2)) {
+        $phid = (int)$sub2;
+        $ph = q1('SELECT url FROM room_photos WHERE id=?', [$phid]);
+        if ($ph) {
+            $docroot = rtrim($_SERVER['DOCUMENT_ROOT'], '/');
+            @unlink($docroot.$ph['url']);
+        }
+        qn('DELETE FROM room_photos WHERE id=?', [$phid]);
+        ok(['deleted'=>true]);
+    }
+
+    // ── POST /api/admin/rooms/:id/videos — add YouTube video ──
+    if ($method === 'POST' && $sub === 'rooms' && is_numeric($sub2) && $sub3 === 'videos') {
+        $rid2 = (int)$sub2;
+        $b = body();
+        if (empty($b['youtube_video_id'])) err(400, 'youtube_video_id required.');
+        $vid = qx('INSERT INTO room_videos (room_id,youtube_video_id,title) VALUES (?,?,?)',
+            [$rid2, $b['youtube_video_id'], $b['title']??null]);
+        ok(['id'=>$vid]);
+    }
+
+    // ── DELETE /api/admin/room-videos/:id ─────────────────────
+    if ($method === 'DELETE' && $sub === 'room-videos' && is_numeric($sub2)) {
+        qn('DELETE FROM room_videos WHERE id=?', [(int)$sub2]);
         ok(['deleted'=>true]);
     }
 
@@ -1121,6 +1172,78 @@ function routeAdmin(array $parts, string $method): void {
             $vdata['water_confirmed']??0,$vdata['electricity_confirmed']??0,$vdata['security_confirmed']??0,
             $vdata['price_confirmed']??0,$b['notes']??null]);
         ok(['verified'=>true]);
+    }
+
+    // ── PUT /api/admin/properties/:id/unverify ───────────────
+    if ($method === 'PUT' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'unverify') {
+        requireAdmin();
+        $pid = (int)$sub2;
+        qn("UPDATE properties SET verified=0,verified_by=NULL,verified_at=NULL,verification_expiry=NULL WHERE id=?", [$pid]);
+        ok(['unverified'=>true]);
+    }
+
+    // ── DELETE /api/admin/properties/:id ─────────────────────
+    if ($method === 'DELETE' && $sub === 'properties' && is_numeric($sub2) && !$sub3) {
+        requireAdmin();
+        $pid = (int)$sub2;
+        qn('DELETE FROM property_universities WHERE property_id=?', [$pid]);
+        qn('DELETE FROM property_amenities WHERE property_id=?', [$pid]);
+        qn('DELETE FROM verification_records WHERE property_id=?', [$pid]);
+        qn('DELETE FROM bookings WHERE property_id=?', [$pid]);
+        qn('DELETE FROM saved_properties WHERE property_id=?', [$pid]);
+        qn('DELETE FROM viewing_requests WHERE property_id=?', [$pid]);
+        // Delete room photos and videos
+        $rooms = q('SELECT id FROM rooms WHERE property_id=?', [$pid]);
+        foreach ($rooms as $rm) {
+            qn('DELETE FROM room_photos WHERE room_id=?', [$rm['id']]);
+            qn('DELETE FROM room_videos WHERE room_id=?', [$rm['id']]);
+        }
+        qn('DELETE FROM rooms WHERE property_id=?', [$pid]);
+        // Delete property photos from disk
+        $photos = q('SELECT url FROM property_photos WHERE property_id=?', [$pid]);
+        $docroot = rtrim($_SERVER['DOCUMENT_ROOT'], '/');
+        foreach ($photos as $ph) @unlink($docroot.$ph['url']);
+        qn('DELETE FROM property_photos WHERE property_id=?', [$pid]);
+        qn('DELETE FROM properties WHERE id=?', [$pid]);
+        ok(['deleted'=>true]);
+    }
+
+    // ── GET /api/admin/property-types ────────────────────────
+    if ($method === 'GET' && $sub === 'property-types' && !$sub2) {
+        ok(q('SELECT id,name,sort_order FROM property_types ORDER BY sort_order,name'));
+    }
+    // ── POST /api/admin/property-types ───────────────────────
+    if ($method === 'POST' && $sub === 'property-types' && !$sub2) {
+        requireAdmin();
+        $b = body();
+        if (empty($b['name'])) err(400, 'Name required.');
+        $id2 = qx('INSERT INTO property_types (name,sort_order) VALUES (?,?)', [trim($b['name']), (int)($b['sort_order']??99)]);
+        ok(['id'=>$id2, 'name'=>trim($b['name'])]);
+    }
+    // ── DELETE /api/admin/property-types/:id ─────────────────
+    if ($method === 'DELETE' && $sub === 'property-types' && is_numeric($sub2)) {
+        requireAdmin();
+        qn('DELETE FROM property_types WHERE id=?', [(int)$sub2]);
+        ok(['deleted'=>true]);
+    }
+
+    // ── GET /api/admin/room-types ─────────────────────────────
+    if ($method === 'GET' && $sub === 'room-types' && !$sub2) {
+        ok(q('SELECT id,name,sort_order FROM room_types ORDER BY sort_order,name'));
+    }
+    // ── POST /api/admin/room-types ────────────────────────────
+    if ($method === 'POST' && $sub === 'room-types' && !$sub2) {
+        requireAdmin();
+        $b = body();
+        if (empty($b['name'])) err(400, 'Name required.');
+        $id2 = qx('INSERT INTO room_types (name,sort_order) VALUES (?,?)', [trim($b['name']), (int)($b['sort_order']??99)]);
+        ok(['id'=>$id2, 'name'=>trim($b['name'])]);
+    }
+    // ── DELETE /api/admin/room-types/:id ─────────────────────
+    if ($method === 'DELETE' && $sub === 'room-types' && is_numeric($sub2)) {
+        requireAdmin();
+        qn('DELETE FROM room_types WHERE id=?', [(int)$sub2]);
+        ok(['deleted'=>true]);
     }
 
     // ── PUT /api/admin/properties/:id/zone — assign zone/cluster (admin only)
@@ -1359,9 +1482,45 @@ function routeSms(array $parts, string $method): void {
         foreach ($tenants as $t) {
             $msg = "GETO STUDENT: Kumbusho - kodi ya {$t['property_name']} ni TZS ".number_format($t['monthly_price'])." kwa mwezi. Tafadhali lipa kwa wakati. Maswali: wasiliana na msimamizi wako.";
             if (sendSMS($t['phone'], $msg, 'reminder-'.date('Ym').'-'.$sent)) $sent++;
-            if ($sent >= 100) break; // safety cap
+            if ($sent >= 100) break;
         }
         ok(['sent'=>$sent,'total'=>count($tenants)]);
+    }
+
+    // POST /api/sms/daily-summary — send activity summary (max 3/day, only if activity)
+    if ($method === 'POST' && $sub === 'daily-summary') {
+        // Check daily cap (max 3 summary SMS per day across both numbers)
+        $sentToday = q1("SELECT COUNT(*) AS cnt FROM sms_logs WHERE DATE(sent_at)=CURDATE() AND reference LIKE 'daily-summary-%'");
+        if ((int)($sentToday['cnt'] ?? 0) >= 6) ok(['skipped'=>true,'reason'=>'Daily limit reached (3 summaries × 2 numbers).']);
+
+        // Gather activity
+        $bookingsToday = q1("SELECT COUNT(*) AS cnt FROM bookings WHERE DATE(created_at)=CURDATE()");
+        $pendingApproval = q1("SELECT COUNT(*) AS cnt FROM properties WHERE status='pending'");
+        $pendingMgr = q1("SELECT COUNT(*) AS cnt FROM properties WHERE status='pending' AND created_by_role='zone_manager'");
+
+        $bCount = (int)($bookingsToday['cnt'] ?? 0);
+        $pCount = (int)($pendingApproval['cnt'] ?? 0);
+        $mCount = (int)($pendingMgr['cnt'] ?? 0);
+
+        // Only send if there's actual activity
+        if ($bCount === 0 && $pCount === 0 && $mCount === 0) {
+            ok(['skipped'=>true,'reason'=>'No activity to report.']);
+        }
+
+        // Build message
+        $parts2 = [];
+        if ($bCount > 0) $parts2[] = "Booking {$bCount} leo";
+        if ($pCount > 0) $parts2[] = "Idhini zinasubiri: {$pCount}";
+        if ($mCount > 0) $parts2[] = "Kutoka wasimamizi: {$mCount}";
+        $msg = "GETO muhtasari: " . implode(', ', $parts2) . ". Ingia portal kukagua: getostudent.co.tz/admin";
+
+        $numbers = ['0627404843', '0657925368'];
+        $ref = 'daily-summary-'.date('Ymd-His');
+        $sent = 0;
+        foreach ($numbers as $num) {
+            if (sendSMS($num, $msg, $ref.'-'.$num)) $sent++;
+        }
+        ok(['sent'=>$sent,'message'=>$msg,'bookings'=>$bCount,'pending'=>$pCount,'from_managers'=>$mCount]);
     }
 
     err(404, 'SMS route not found.');
@@ -1374,6 +1533,12 @@ $uri    = strtok($_SERVER['REQUEST_URI'], '?');
 $uri    = preg_replace('#^/api#', '', $uri);
 $parts  = array_values(array_filter(explode('/', $uri)));
 $method = $_SERVER['REQUEST_METHOD'];
+
+// Public GET for room/property types (used by students and public pages)
+if ($method === 'GET' && ($parts[0] ?? '') === 'admin' && in_array($parts[1] ?? '', ['room-types','property-types']) && !($parts[2] ?? '')) {
+    $tbl = ($parts[1] === 'room-types') ? 'room_types' : 'property_types';
+    ok(q("SELECT id,name,sort_order FROM $tbl ORDER BY sort_order,name"));
+}
 
 switch ($parts[0] ?? '') {
     case 'health':       routeHealth(); break;

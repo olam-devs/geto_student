@@ -48,7 +48,8 @@ export default function Footer() {
           <h4 className="font-display font-semibold text-white text-sm mb-4">Contact Us</h4>
           <ul className="space-y-3 text-sm">
             <li className="flex items-start gap-2"><MapPin size={14} className="text-accent-500 mt-0.5 shrink-0"/><span>Dar es Salaam, Tanzania</span></li>
-            <li className="flex items-center gap-2"><Phone size={14} className="text-accent-500"/><a href="tel:+255755000000" className="hover:text-white">+255 755 000 000</a></li>
+            <li className="flex items-center gap-2"><Phone size={14} className="text-accent-500"/><a href="tel:+255657925368" className="hover:text-white">+255 657 925 368</a></li>
+            <li className="flex items-center gap-2"><Phone size={14} className="text-accent-500"/><a href="https://wa.me/255657925368" target="_blank" rel="noreferrer" className="hover:text-white">WhatsApp: +255 657 925 368</a></li>
             <li className="flex items-center gap-2"><Mail size={14} className="text-accent-500"/><a href="mailto:info@getostudent.tz" className="hover:text-white">info@getostudent.tz</a></li>
           </ul>
         </div>
