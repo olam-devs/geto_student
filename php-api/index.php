@@ -203,6 +203,43 @@ function makeReferralCode(string $name): string {
     return $code;
 }
 
+// ─── SMS Helper ────────────────────────────────────────────────
+function sendSMS(string $phone, string $text, string $reference = ''): bool {
+    if (!defined('SMS_TOKEN') || !SMS_TOKEN) return false;
+    $ref = $reference ?: 'geto'.time();
+    $ch  = curl_init('https://messaging-service.co.tz/api/sms/v2/text/single');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => [
+            'Authorization: Bearer '.SMS_TOKEN,
+            'Content-Type: application/json',
+            'Accept: application/json',
+        ],
+        CURLOPT_POSTFIELDS  => json_encode(['from'=>SMS_SENDER,'to'=>$phone,'text'=>$text,'flash'=>0,'reference'=>$ref]),
+        CURLOPT_TIMEOUT     => 10,
+        CURLOPT_SSL_VERIFYPEER => false,
+    ]);
+    $resp = curl_exec($ch);
+    curl_close($ch);
+    $json   = json_decode((string)$resp, true);
+    $status = $json['messages'][0]['status']['name'] ?? 'UNKNOWN';
+    $msgId  = $json['messages'][0]['messageId'] ?? null;
+    try { qn('INSERT INTO sms_logs (recipient_phone,message,reference,status,message_id) VALUES (?,?,?,?,?)',
+              [$phone, $text, $ref, $status, $msgId]); } catch (Exception) {}
+    return isset($json['messages'][0]['status']['groupId']);
+}
+
+function getAdminPhone(): ?string {
+    $r = q1("SELECT phone FROM users WHERE role='admin' AND status='active' LIMIT 1");
+    return $r['phone'] ?? null;
+}
+
+function adminBookingSmsCountToday(): int {
+    $r = q1("SELECT COUNT(*) AS cnt FROM sms_logs WHERE DATE(sent_at)=CURDATE() AND reference LIKE 'booking-%'");
+    return (int)($r['cnt'] ?? 0);
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  ROUTE HANDLERS
 // ═══════════════════════════════════════════════════════════════
@@ -804,6 +841,19 @@ function routeStudent(array $parts, string $method): void {
         $bid = qx("INSERT INTO bookings (student_id,property_id,room_id,owner_id,move_in_date,move_in_notes,status)
                    VALUES (?,?,?,?,?,?,'pending')",
                   [$u['id'],$b['property_id'],$b['room_id'],$prop['owner_id'],$b['move_in_date'],$b['notes']??null]);
+        // Notify admin via SMS (max SMS_ADMIN_MAX_DAY per day)
+        if (adminBookingSmsCountToday() < (defined('SMS_ADMIN_MAX_DAY') ? SMS_ADMIN_MAX_DAY : 3)) {
+            $adminPhone = getAdminPhone();
+            if ($adminPhone) {
+                $zone  = q1("SELECT z.code FROM properties p LEFT JOIN zones z ON z.id=p.zone_id WHERE p.id=?", [(int)$b['property_id']]);
+                $zCode = $zone['code'] ?? '?';
+                $today = q1("SELECT COUNT(*) AS cnt FROM bookings WHERE DATE(created_at)=CURDATE()");
+                $total = (int)($today['cnt'] ?? 0);
+                sendSMS($adminPhone,
+                    "GETO: Booking mpya! Kanda {$zCode} - jumla leo: {$total}. Mali: {$prop['name']}. Ingia portal kukagua.",
+                    "booking-$bid");
+            }
+        }
         created(['message'=>'Ombi la uhifadhi limetumwa.','bookingId'=>$bid]);
     }
 
@@ -912,7 +962,21 @@ function routeAdmin(array $parts, string $method): void {
             (SELECT SUM(total_count) FROM rooms) AS total_rooms,
             (SELECT SUM(occupied_count) FROM rooms) AS occupied_rooms") : null;
 
-        ok(['global'=>$global,'zones'=>$byZone,'my_zone'=>!$isAdmin?array_merge($ps??[],$rs??[],$bs??[]):null]);
+        $managerStats = $isAdmin ? q("
+            SELECT u.id, u.name, u.phone, z.code AS zone_code, z.name AS zone_name,
+                   COUNT(p.id) AS properties_added,
+                   SUM(p.status='approved') AS approved_count,
+                   SUM(p.status='pending')  AS pending_count
+            FROM users u
+            LEFT JOIN zones z ON z.id=u.zone_id
+            LEFT JOIN properties p ON p.created_by=u.id AND p.created_by_role='zone_manager'
+            WHERE u.role='zone_manager'
+            GROUP BY u.id ORDER BY z.code") : [];
+        $pendingFromManagers = $isAdmin
+            ? (int)(q1("SELECT COUNT(*) AS cnt FROM properties WHERE status='pending' AND created_by_role='zone_manager'")['cnt'] ?? 0)
+            : 0;
+        ok(['global'=>$global,'zones'=>$byZone,'my_zone'=>!$isAdmin?array_merge($ps??[],$rs??[],$bs??[]):null,
+            'manager_stats'=>$managerStats,'pending_from_managers'=>$pendingFromManagers]);
     }
 
     // ── GET /api/admin/properties ─────────────────────────────
@@ -957,28 +1021,41 @@ function routeAdmin(array $parts, string $method): void {
         ok(array_merge($prop,['photos'=>$photos,'amenities'=>$amenities,'rooms'=>$rooms,'tenants'=>$tenants,'verification'=>$verif,'manager'=>$manager]));
     }
 
-    // ── POST /api/admin/properties — admin creates a property ─
+    // ── POST /api/admin/properties — admin or geto manager creates a property ─
     if ($method === 'POST' && $sub === 'properties' && !$sub2) {
-        if (!$isAdmin) err(403, 'Admin only.');
         $b = body();
         if (empty($b['name']) || empty($b['nearest_university_id'])) err(400, 'Name and university required.');
         $uni = q1('SELECT zone_id,cluster_id FROM universities WHERE id=?', [(int)$b['nearest_university_id']]);
         $zid = !empty($b['zone_id']) ? (int)$b['zone_id'] : ($uni['zone_id'] ?? null);
         $cid = !empty($b['cluster_id']) ? (int)$b['cluster_id'] : ($uni['cluster_id'] ?? null);
         $ownerId = !empty($b['owner_id']) ? (int)$b['owner_id'] : (int)$u['id'];
-        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,distance_km,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        // Admin → auto-approved; zone_manager → pending (needs admin review)
+        $status = $isAdmin ? 'approved' : 'pending';
+        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,distance_km,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,status,created_by,created_by_role) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [$b['name'], $b['property_type']??'Hostel', $b['description']??'',
              $b['address']??'', $b['landmark']??null, $b['area']??'',
              !empty($b['distance_km']) ? (float)$b['distance_km'] : null,
              (int)$b['nearest_university_id'], $zid, $cid,
-             $ownerId, $b['youtube_video_id']??null, 'approved']);
+             $ownerId, $b['youtube_video_id']??null, $status,
+             (int)$u['id'], $u['role']]);
         // Populate junction table with all selected universities
         $uniIds = array_filter(array_map('intval', (array)($b['university_ids'] ?? [(int)$b['nearest_university_id']])));
         if (!in_array((int)$b['nearest_university_id'], $uniIds)) $uniIds[] = (int)$b['nearest_university_id'];
         foreach ($uniIds as $uid2) {
             if ($uid2 > 0) qn('INSERT IGNORE INTO property_universities (property_id,university_id) VALUES (?,?)', [$pid, $uid2]);
         }
-        ok(['id'=>$pid, 'message'=>'Property created and approved.']);
+        // Zone manager: notify admin by SMS
+        if (!$isAdmin) {
+            $adminPhone = getAdminPhone();
+            if ($adminPhone) {
+                $mgrName = $u['name'] ?? 'Msimamizi';
+                sendSMS($adminPhone,
+                    "GETO: {$mgrName} ameongeza mali '{$b['name']}' - inasubiri idhini yako. Ingia portal kukagua.",
+                    "mgr-prop-$pid");
+            }
+            ok(['id'=>$pid, 'status'=>'pending', 'message'=>'Mali imewasilishwa kwa idhini ya admin.']);
+        }
+        ok(['id'=>$pid, 'status'=>'approved', 'message'=>'Property created and approved.']);
     }
 
     // ── POST /api/admin/properties/:id/rooms — add room type ──
@@ -1253,6 +1330,43 @@ function routeAdmin(array $parts, string $method): void {
     err(404, 'Admin route not found.');
 }
 
+// ─── /api/sms/* — SMS callback + tenant reminders ─────────────
+function routeSms(array $parts, string $method): void {
+    $sub = $parts[1] ?? '';
+
+    // POST /api/sms/callback — delivery report from Next SMS
+    if ($method === 'POST' && $sub === 'callback') {
+        $b = body();
+        $token = $_GET['token'] ?? ($b['token'] ?? '');
+        if (!hash_equals(SMS_CALLBACK_TOKEN, (string)$token)) { http_response_code(403); exit; }
+        $msgId  = $b['messageId'] ?? null;
+        $status = $b['status']['name'] ?? ($b['status'] ?? 'UNKNOWN');
+        if ($msgId) qn("UPDATE sms_logs SET status=? WHERE message_id=?", [$status, $msgId]);
+        ok(['received'=>true]);
+    }
+
+    // POST /api/sms/tenant-reminders — admin triggers monthly rent reminder to all active tenants
+    if ($method === 'POST' && $sub === 'tenant-reminders') {
+        requireAdmin();
+        $tenants = q("SELECT u.phone, u.name, p.name AS property_name, r.monthly_price
+                      FROM bookings b
+                      JOIN users u       ON u.id=b.student_id
+                      JOIN properties p  ON p.id=b.property_id
+                      JOIN rooms r       ON r.id=b.room_id
+                      WHERE b.status='confirmed'
+                      ORDER BY u.id");
+        $sent = 0;
+        foreach ($tenants as $t) {
+            $msg = "GETO STUDENT: Kumbusho - kodi ya {$t['property_name']} ni TZS ".number_format($t['monthly_price'])." kwa mwezi. Tafadhali lipa kwa wakati. Maswali: wasiliana na msimamizi wako.";
+            if (sendSMS($t['phone'], $msg, 'reminder-'.date('Ym').'-'.$sent)) $sent++;
+            if ($sent >= 100) break; // safety cap
+        }
+        ok(['sent'=>$sent,'total'=>count($tenants)]);
+    }
+
+    err(404, 'SMS route not found.');
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  ROUTER
 // ═══════════════════════════════════════════════════════════════
@@ -1271,6 +1385,7 @@ switch ($parts[0] ?? '') {
     case 'properties':   routeProperties($parts, $method); break;
     case 'portal':       routePortal($parts, $method); break;
     case 'student':      routeStudent($parts, $method); break;
+    case 'sms':          routeSms($parts, $method); break;
     case 'admin':        routeAdmin($parts, $method); break;
     default:             err(404, 'API route not found.');
 }

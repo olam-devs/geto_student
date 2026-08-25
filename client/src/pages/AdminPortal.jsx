@@ -117,6 +117,17 @@ function Dashboard() {
   const g = data?.global;
   return (
     <div className="p-5 lg:p-8 space-y-8">
+      {/* Pending-from-managers alert */}
+      {isAdmin && (data?.pending_from_managers || 0) > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl px-5 py-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="font-bold text-amber-800 text-sm">Mali {data.pending_from_managers} zinasubiri idhini yako</p>
+            <p className="text-amber-700 text-xs mt-0.5">Wasimamizi wa kanda wameongeza mali ambazo bado hazijakaguliwa.</p>
+          </div>
+          <a href="/admin/properties" className="btn-sm bg-amber-600 text-white hover:bg-amber-700 text-xs shrink-0">Kagua Sasa</a>
+        </div>
+      )}
+
       {/* Global stats (admin only) */}
       {isAdmin && g && (
         <section>
@@ -130,6 +141,34 @@ function Dashboard() {
             <StatCard label="Uhifadhi Wote"    value={g.total_bookings}         sub={`${g.confirmed_bookings} yaliyothibitishwa`} />
             <StatCard label="Vyumba Vyote"     value={g.total_rooms}            sub={`${g.occupied_rooms} vinavyokaliwa`} color="accent" />
             <StatCard label="Wasimamizi Kanda" value={g.total_zone_managers}    />
+          </div>
+        </section>
+      )}
+
+      {/* Manager property activity table (admin only) */}
+      {isAdmin && (data?.manager_stats||[]).length > 0 && (
+        <section>
+          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Mali Zilizoongezwa na Wasimamizi</h3>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>{['Msimamizi','Simu','Kanda','Zilizoongezwa','Zilizoidhinishwa','Zinasubiri'].map(h=>(
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(data.manager_stats||[]).map(m => (
+                  <tr key={m.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-slate-800">{m.name}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{m.phone}</td>
+                    <td className="px-4 py-3"><span className="bg-primary-50 text-primary-700 text-xs font-bold px-2 py-0.5 rounded-md">{m.zone_code||'—'}</span></td>
+                    <td className="px-4 py-3 font-bold text-slate-800">{m.properties_added||0}</td>
+                    <td className="px-4 py-3 text-green-600 font-semibold">{m.approved_count||0}</td>
+                    <td className="px-4 py-3 text-amber-600 font-semibold">{m.pending_count||0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       )}
@@ -229,10 +268,13 @@ function PropertiesList() {
           </button>
         ))}
         </div>
-        {isAdmin && (
-          <button onClick={() => setAddOpen(true)} className="btn-primary text-sm shrink-0"><Plus size={15}/>Ongeza Mali</button>
-        )}
+        <button onClick={() => setAddOpen(true)} className="btn-primary text-sm shrink-0"><Plus size={15}/>Ongeza Mali</button>
       </div>
+      {!isAdmin && (
+        <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-700 font-medium flex items-center gap-2">
+          <span>Mali unayoiongeza itaenda kwa idhini ya Admin kabla ya kuchapishwa.</span>
+        </div>
+      )}
       {addOpen && <AddPropertyModal onClose={() => setAddOpen(false)} onSaved={load} />}
       {loading ? <Spinner /> : (
         <div className="space-y-3">

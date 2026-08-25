@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CheckCircle2, Shield, Clock, Star, ArrowRight, MapPin, ChevronRight,
@@ -8,12 +8,68 @@ import api from '../api';
 import PropertyCard from '../components/PropertyCard';
 import PropertyModal from '../components/PropertyModal';
 
-const SLIDES = [
-  { src: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=1000&h=700&fit=crop&fm=webp&q=80', caption: 'Modern studio apartment' },
-  { src: 'https://images.unsplash.com/photo-1555854877-bab0e564b8d5?w=1000&h=700&fit=crop&fm=webp&q=80', caption: 'Comfortable private room' },
-  { src: 'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=1000&h=700&fit=crop&fm=webp&q=80', caption: 'Spacious shared living space' },
-  { src: 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=1000&h=700&fit=crop&fm=webp&q=80', caption: 'Fully equipped kitchen' },
-  { src: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=1000&h=700&fit=crop&fm=webp&q=80', caption: 'Well-lit study environment' },
+// ── 4-photo grid: each cell has its own independent photo set ──
+const PHOTO_SETS = [
+  [
+    'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=420&fit=crop&fm=webp&q=75',
+    'https://images.unsplash.com/photo-1555854877-bab0e564b8d5?w=600&h=420&fit=crop&fm=webp&q=75',
+    'https://images.unsplash.com/photo-1540518614846-7eded433c457?w=600&h=420&fit=crop&fm=webp&q=75',
+  ],
+  [
+    'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=600&h=420&fit=crop&fm=webp&q=75',
+    'https://images.unsplash.com/photo-1567767292278-a4f21aa2d36e?w=600&h=420&fit=crop&fm=webp&q=75',
+    'https://images.unsplash.com/photo-1556909212-d5b604d0c90d?w=600&h=420&fit=crop&fm=webp&q=75',
+  ],
+  [
+    'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=420&fit=crop&fm=webp&q=75',
+    'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600&h=420&fit=crop&fm=webp&q=75',
+    'https://images.unsplash.com/photo-1524758631624-e2822e304c36?w=600&h=420&fit=crop&fm=webp&q=75',
+  ],
+  [
+    'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=600&h=420&fit=crop&fm=webp&q=75',
+    'https://images.unsplash.com/photo-1574362848149-11496d93a7c7?w=600&h=420&fit=crop&fm=webp&q=75',
+    'https://images.unsplash.com/photo-1493809842364-78817add7ffb?w=600&h=420&fit=crop&fm=webp&q=75',
+  ],
+];
+const INTERVALS = [3600, 4400, 5200, 3900];
+
+function PhotoCell({ photos, interval, badge = false }) {
+  const [cur, setCur] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setCur(i => (i + 1) % photos.length), interval);
+    return () => clearInterval(t);
+  }, [interval, photos.length]);
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-slate-100" style={{ aspectRatio: '4/3' }}>
+      {photos.map((src, i) => (
+        <img key={src} src={src} alt=""
+          className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
+          style={{ opacity: cur === i ? 1 : 0 }}
+        />
+      ))}
+      {badge && (
+        <div className="absolute top-2.5 left-2.5 bg-verified/90 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1">
+          <CheckCircle2 size={9}/> GETO VERIFIED
+        </div>
+      )}
+    </div>
+  );
+}
+
+const steps = [
+  { n: '01', Icon: GraduationCap, title: 'Discover',  desc: 'Search by university, room type, and budget — no WhatsApp broker chains.' },
+  { n: '02', Icon: ShieldCheck,   title: 'Verify',    desc: 'The Geto Verified badge is backed by a real physical inspection record.' },
+  { n: '03', Icon: BarChart3,     title: 'Compare',   desc: 'Real rooms, real prices, real availability across Dar es Salaam.' },
+  { n: '04', Icon: CalendarCheck, title: 'Book',      desc: 'Request a room or a guided site visit and track your status live.' },
+  { n: '05', Icon: Gift,          title: 'Refer',     desc: 'Invite a friend and earn TZS rewards for each successful booking.' },
+];
+
+const trustItems = [
+  { Icon: CheckCircle2, color: 'text-verified', bg: 'bg-green-50',      label: 'Verified Properties',    desc: 'Every Geto Verified badge is backed by a physical inspection.' },
+  { Icon: Shield,       color: 'text-primary-700', bg: 'bg-primary-50', label: 'No Fake Listings',       desc: 'Listings that fail inspection are rejected before students see them.' },
+  { Icon: Clock,        color: 'text-accent-600', bg: 'bg-accent-50',   label: '24/7 Admin Support',     desc: 'Chat with a Geto admin any time for help with bookings or viewings.' },
+  { Icon: Star,         color: 'text-amber-500', bg: 'bg-amber-50',     label: 'Transparent Pricing',    desc: 'What you see is exactly what you pay — no hidden agent fees.' },
 ];
 
 export default function Home() {
@@ -22,19 +78,6 @@ export default function Home() {
   const [featured, setFeatured]   = useState([]);
   const [selectedProp, setSelectedProp] = useState(null);
   const [propCount, setPropCount] = useState(0);
-  const [slide, setSlide]         = useState(0);
-  const timerRef = useRef(null);
-
-  const goToSlide = (i) => {
-    setSlide(i);
-    clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => setSlide(s => (s + 1) % SLIDES.length), 4500);
-  };
-
-  useEffect(() => {
-    timerRef.current = setInterval(() => setSlide(s => (s + 1) % SLIDES.length), 4500);
-    return () => clearInterval(timerRef.current);
-  }, []);
 
   useEffect(() => {
     api.get('/universities').then(r => setUnis(r.data)).catch(() => {});
@@ -44,130 +87,103 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
-  const steps = [
-    { n: '01', Icon: GraduationCap, title: 'Discover',  desc: 'Search by university, room type, and budget — no WhatsApp broker chains.' },
-    { n: '02', Icon: ShieldCheck,   title: 'Verify',    desc: 'The Geto Verified badge is backed by a real physical inspection record.' },
-    { n: '03', Icon: BarChart3,     title: 'Compare',   desc: 'Real rooms, real prices, real availability across Dar es Salaam.' },
-    { n: '04', Icon: CalendarCheck, title: 'Book',      desc: 'Request a room or a guided site visit and track your status live.' },
-    { n: '05', Icon: Gift,          title: 'Refer',     desc: 'Invite a friend and earn TZS rewards for each successful booking.' },
-  ];
-
-  const trustItems = [
-    { Icon: CheckCircle2, color: 'text-verified', bg: 'bg-green-50', label: 'Verified Properties',    desc: 'Every Geto Verified badge is backed by a physical inspection.' },
-    { Icon: Shield,       color: 'text-primary-700', bg: 'bg-primary-50', label: 'No Fake Listings',  desc: 'Listings that fail inspection are rejected before students see them.' },
-    { Icon: Clock,        color: 'text-accent-600', bg: 'bg-accent-50',  label: '24/7 Admin Support', desc: 'Chat with a Geto admin any time for help with bookings or viewings.' },
-    { Icon: Star,         color: 'text-amber-500', bg: 'bg-amber-50',   label: 'Transparent Pricing', desc: 'What you see is exactly what you pay — no hidden agent fees.' },
-  ];
-
   return (
     <>
       {/* ─── HERO ─── */}
-      <section className="relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f5f0e8 0%, #fafaf7 60%, #fef3ec 100%)' }}>
-        {/* Accent blob top-right */}
-        <div className="absolute top-0 right-0 w-[480px] h-[480px] rounded-full pointer-events-none"
-          style={{ background: 'radial-gradient(circle, rgba(201,95,42,0.08) 0%, transparent 70%)', transform: 'translate(30%, -30%)' }}/>
+      <section className="relative overflow-hidden bg-white">
+        {/* Subtle green blob top-right */}
+        <div className="absolute top-0 right-0 w-[700px] h-[700px] pointer-events-none opacity-[0.04]"
+          style={{ background: 'radial-gradient(circle, #1E4835 0%, transparent 65%)', transform: 'translate(20%,-20%)' }}/>
+        {/* Subtle orange blob bottom-left */}
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] pointer-events-none opacity-[0.04]"
+          style={{ background: 'radial-gradient(circle, #C95F2A 0%, transparent 65%)', transform: 'translate(-30%,30%)' }}/>
 
-        {/* Mobile: slideshow at top full-width */}
-        <div className="lg:hidden relative w-full" style={{ height: '260px' }}>
-          {SLIDES.map(({ src, caption }, i) => (
-            <img key={src} src={src} alt={caption}
-              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
-              style={{ opacity: slide === i ? 1 : 0 }}
-            />
-          ))}
-          <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/50 to-transparent pointer-events-none"/>
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2">
-            {SLIDES.map((_, i) => (
-              <button key={i} onClick={() => goToSlide(i)}
-                className={`rounded-full transition-all duration-300 ${slide === i ? 'bg-white w-5 h-1.5' : 'bg-white/50 w-1.5 h-1.5'}`}
-              />
-            ))}
-          </div>
-        </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 lg:py-20">
+          <div className="grid lg:grid-cols-[1fr_440px] xl:grid-cols-[1fr_500px] gap-10 lg:gap-16 items-center">
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="grid lg:grid-cols-2 gap-8 lg:gap-14 items-center">
-
-            {/* Left: text */}
-            <div className="py-9 lg:py-20">
-              <div className="inline-flex items-center gap-2 bg-white border border-slate-200 text-slate-500 text-xs font-medium px-3 py-1.5 rounded-full mb-6 shadow-sm">
-                <MapPin size={11} className="text-accent-600" strokeWidth={2.5}/>
-                Dar es Salaam &middot; {universities.length || 8} Universities
+            {/* ── Left: text ── */}
+            <div className="order-2 lg:order-1">
+              <div className="inline-flex items-center gap-2 bg-primary-50 border border-primary-100 text-primary-700 text-xs font-semibold px-3.5 py-1.5 rounded-full mb-6">
+                <MapPin size={11} strokeWidth={2.5}/>
+                Dar es Salaam · Mbeya · {universities.length || 30}+ Vyuo Vikuu
               </div>
 
-              <h1 className="font-sans font-semibold text-[34px] sm:text-[46px] lg:text-[56px] text-slate-900 leading-[1.1] mb-4 tracking-tight">
-                Find verified<br/>student rooms<br/>
-                <span className="text-accent-600">near your campus.</span>
+              <h1 className="font-display font-bold leading-[1.05] tracking-tight text-slate-900 mb-5"
+                style={{ fontSize: 'clamp(36px,5.5vw,64px)' }}>
+                Pata Chumba<br/>
+                <span className="text-primary-700">Salama</span> Karibu<br/>
+                na <span className="text-accent-600">Chuo Chako.</span>
               </h1>
 
-              <p className="text-slate-500 text-sm sm:text-base leading-relaxed mb-7 max-w-[400px]">
-                No fake listings. No hidden fees. Every property on Geto Student is physically inspected before students can see it.
+              <p className="text-slate-500 text-base sm:text-lg leading-relaxed mb-8 max-w-[480px]">
+                Bila orodha za uongo. Bila ada zilizofichwa. Kila mali kwenye Geto Student inakaguliwa kimwili kabla ya wanafunzi kuiona.
               </p>
 
+              {/* Stats */}
+              <div className="flex flex-wrap items-center gap-6 sm:gap-10 mb-8">
+                <div>
+                  <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{propCount || 500}+</p>
+                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Vyumba</p>
+                </div>
+                <div className="w-px h-12 bg-slate-200"/>
+                <div>
+                  <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{universities.length || 30}+</p>
+                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Vyuo Vikuu</p>
+                </div>
+                <div className="w-px h-12 bg-slate-200"/>
+                <div>
+                  <p className="font-display font-extrabold text-4xl text-accent-600 leading-none">2024</p>
+                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Tulianzisha</p>
+                </div>
+              </div>
+
+              {/* CTA */}
+              <div className="flex flex-wrap gap-3">
+                <button onClick={() => navigate('/find-room')}
+                  className="inline-flex items-center gap-2 bg-primary-700 hover:bg-primary-800 text-white font-bold px-7 py-3.5 rounded-xl text-sm transition-all shadow-lg shadow-primary-700/25 hover:shadow-primary-700/40 hover:-translate-y-0.5">
+                  Tafuta Chumba <ArrowRight size={15}/>
+                </button>
+                <button onClick={() => navigate('/auth?tab=register')}
+                  className="inline-flex items-center gap-2 border-2 border-slate-200 hover:border-primary-500 hover:text-primary-700 text-slate-600 font-bold px-7 py-3.5 rounded-xl text-sm transition-all">
+                  Sajili Mali Yako
+                </button>
+              </div>
+
               {/* University chips */}
-              <div className="flex flex-wrap gap-2 mb-7">
+              <div className="flex flex-wrap gap-2 mt-6">
                 {universities.slice(0, 5).map(u => (
                   <button key={u.id} onClick={() => navigate(`/find-room?university_id=${u.id}`)}
-                    className="inline-flex items-center gap-1.5 bg-white border border-slate-200 hover:border-accent-500 hover:text-accent-600 text-slate-600 text-xs font-semibold px-3 py-2 rounded-full transition-all shadow-sm">
-                    <GraduationCap size={11} strokeWidth={2.5}/>
-                    {u.short_name}
+                    className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 hover:border-primary-500 hover:text-primary-700 text-slate-500 text-xs font-semibold px-3 py-1.5 rounded-full transition-all">
+                    <GraduationCap size={10} strokeWidth={2.5}/> {u.short_name}
                   </button>
                 ))}
               </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <button onClick={() => navigate('/find-room')}
-                  className="inline-flex items-center gap-2 bg-accent-600 hover:bg-accent-700 text-white font-semibold px-6 py-3 rounded-xl transition-colors shadow-md text-sm">
-                  Tafuta Chumba <ArrowRight size={15}/>
-                </button>
-                <div className="flex items-center gap-2 text-slate-400 text-xs">
-                  <CheckCircle2 size={13} className="text-verified"/>
-                  {propCount || 24}+ verified listings
-                </div>
-              </div>
             </div>
 
-            {/* Right: slideshow — desktop only (mobile shown above) */}
-            <div className="hidden lg:block relative pb-8">
-              <div className="relative rounded-2xl overflow-hidden shadow-lift" style={{ height: '520px' }}>
-                {SLIDES.map(({ src, caption }, i) => (
-                  <img key={src} src={src} alt={caption}
-                    className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
-                    style={{ opacity: slide === i ? 1 : 0 }}
-                  />
-                ))}
-                <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/55 to-transparent pointer-events-none"/>
-                <p className="absolute bottom-14 left-5 text-white/80 text-xs font-medium">{SLIDES[slide].caption}</p>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-2">
-                  {SLIDES.map((_, i) => (
-                    <button key={i} onClick={() => goToSlide(i)}
-                      className={`rounded-full transition-all duration-300 ${slide === i ? 'bg-white w-6 h-2' : 'bg-white/50 w-2 h-2 hover:bg-white/75'}`}
-                    />
-                  ))}
-                </div>
-                <div className="absolute top-4 right-4 bg-black/30 backdrop-blur-sm text-white text-xs font-medium px-2.5 py-1 rounded-full">
-                  {slide + 1} / {SLIDES.length}
-                </div>
+            {/* ── Right: 4-photo animated grid ── */}
+            <div className="order-1 lg:order-2">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                <PhotoCell photos={PHOTO_SETS[0]} interval={INTERVALS[0]}/>
+                <PhotoCell photos={PHOTO_SETS[1]} interval={INTERVALS[1]} badge/>
+                <PhotoCell photos={PHOTO_SETS[2]} interval={INTERVALS[2]}/>
+                <PhotoCell photos={PHOTO_SETS[3]} interval={INTERVALS[3]}/>
               </div>
 
-              {/* Floating verified card */}
-              <div className="absolute -bottom-0 -left-8 bg-white rounded-2xl shadow-lift p-4 border border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-green-50 flex items-center justify-center shrink-0">
-                    <CheckCircle2 size={17} className="text-verified"/>
+              {/* Floating verified bar below grid */}
+              <div className="mt-3 bg-primary-900 text-white rounded-2xl px-5 py-3.5 flex items-center justify-between shadow-lift">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-verified/20 flex items-center justify-center shrink-0">
+                    <CheckCircle2 size={16} className="text-green-300"/>
                   </div>
                   <div>
-                    <p className="text-[11px] text-slate-400 font-medium">Verified listings</p>
-                    <p className="font-display font-extrabold text-slate-900 text-[17px] leading-tight">{propCount || 24}+ rooms</p>
-                    <p className="text-[11px] text-slate-400">From TZS 150,000/mo</p>
+                    <p className="text-xs text-white/60 font-medium">Geto Verified</p>
+                    <p className="text-sm font-bold">{propCount || 24}+ mali zilizokaguliwa</p>
                   </div>
                 </div>
-              </div>
-
-              {/* Floating accent chip */}
-              <div className="absolute -top-4 -right-4 bg-accent-600 text-white rounded-2xl px-5 py-3 text-center shadow-md">
-                <p className="font-display font-extrabold text-2xl leading-none">{universities.length || 8}</p>
-                <p className="text-[10px] font-semibold uppercase tracking-wider opacity-85 mt-0.5">Universities</p>
+                <div className="text-right">
+                  <p className="text-xs text-white/60">Kuanzia</p>
+                  <p className="text-sm font-bold text-accent-400">150,000 TZS/mo</p>
+                </div>
               </div>
             </div>
           </div>
@@ -175,7 +191,7 @@ export default function Home() {
       </section>
 
       {/* ─── TRUST BAR ─── */}
-      <section className="border-y border-slate-200 bg-white">
+      <section className="border-y border-slate-100 bg-slate-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap gap-4 justify-center sm:justify-between items-center">
           <div className="flex items-center gap-2 text-sm text-slate-600"><CheckCircle2 size={15} className="text-verified"/> <span className="font-semibold">Verified Properties</span></div>
           <div className="w-px h-4 bg-slate-200 hidden sm:block"/>
@@ -201,11 +217,8 @@ export default function Home() {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {universities.map(u => (
-            <button
-              key={u.id}
-              onClick={() => navigate(`/find-room?university_id=${u.id}`)}
-              className="bg-white border border-slate-200 rounded-xl p-4 text-left hover:border-accent-500 hover:shadow-md transition-all duration-200 group"
-            >
+            <button key={u.id} onClick={() => navigate(`/find-room?university_id=${u.id}`)}
+              className="bg-white border border-slate-200 rounded-xl p-4 text-left hover:border-accent-500 hover:shadow-md transition-all duration-200 group">
               <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center mb-3 group-hover:bg-accent-50 transition-colors">
                 <GraduationCap size={18} className="text-primary-700 group-hover:text-accent-600 transition-colors"/>
               </div>
@@ -300,10 +313,8 @@ export default function Home() {
               Sajili mali yako, thibitisha, na wafikia maelfu ya wanafunzi wa vyuo vikuu Tanzania.
             </p>
           </div>
-          <button
-            onClick={() => navigate('/auth?tab=register')}
-            className="btn-accent relative z-10 shrink-0 text-sm py-3 px-8"
-          >
+          <button onClick={() => navigate('/auth?tab=register')}
+            className="btn-accent relative z-10 shrink-0 text-sm py-3 px-8">
             Sajili Mali Yako <ChevronRight size={16}/>
           </button>
         </div>

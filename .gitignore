@@ -10,6 +10,14 @@ server/.env
 # Build output
 server/public/
 client/dist/
+dist/
+
+# PHP API credentials (deploy manually to server, never commit)
+php-api/_config.php
+
+# Deployment helpers (auto-deleted by server after running)
+__*.php
+deploy.zip
 
 # Uploads (user-generated content — back up separately)
 server/uploads/*
