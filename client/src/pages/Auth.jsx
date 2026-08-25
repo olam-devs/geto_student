@@ -252,12 +252,6 @@ export default function Auth({ staffMode = false }) {
               {loading ? 'Tafadhali subiri…' : tab === 'login' ? 'Ingia' : 'Jisajili'}
             </button>
 
-            {/* Staff login link */}
-            <div className="text-center pt-1">
-              <a href="/admin/login" className="text-xs text-slate-400 hover:text-primary transition-colors">
-                Msimamizi wa Geto? Ingia hapa →
-              </a>
-            </div>
           </form>
         </div>
 
