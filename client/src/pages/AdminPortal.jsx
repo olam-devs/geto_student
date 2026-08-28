@@ -349,7 +349,12 @@ function AddPropertyModal({ onClose, onSaved }) {
   const [f, setF] = useState({
     name:'', property_type:'Hostel', description:'', address:'', landmark:'', area:'',
     highlight:'', nearest_university_id:'', zone_id:'', cluster_id:'', youtube_video_id:'',
+    latitude:'', longitude:'',
   });
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsErr, setGpsErr]         = useState('');
+  const [idFront, setIdFront] = useState(null);
+  const [idBack,  setIdBack]  = useState(null);
   const [rf, setRf] = useState({
     room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1',
     total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared', description:'',
@@ -398,6 +403,19 @@ function AddPropertyModal({ onClose, onSaved }) {
     else setClust([]);
   };
 
+  const extractGps = () => {
+    if (!navigator.geolocation) { setGpsErr('Geolocation not supported by this browser.'); return; }
+    setGpsLoading(true); setGpsErr('');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setF(p => ({ ...p, latitude: pos.coords.latitude.toFixed(8), longitude: pos.coords.longitude.toFixed(8) }));
+        setGpsLoading(false);
+      },
+      (e) => { setGpsErr('Could not get location: ' + e.message); setGpsLoading(false); },
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  };
+
   const saveStep1 = async (e) => {
     e.preventDefault(); setErr(''); setSaving(true);
     try {
@@ -411,12 +429,18 @@ function AddPropertyModal({ onClose, onSaved }) {
       let ownerId = selectedOwner?.id || null;
       if (ownerMode === 'create') {
         if (!ownerForm.name || !ownerForm.email || !ownerForm.phone || !ownerForm.password) {
-          setErr('Jaza maelezo yote ya mmiliki.'); setSaving(false); return;
+          setErr('Please fill all owner details.'); setSaving(false); return;
         }
         const r = await api.post('/admin/users/owner', ownerForm);
         ownerId = r.data.id;
+        // Upload National ID photos if provided
+        for (const [file, side] of [[idFront,'front'],[idBack,'back']]) {
+          if (!file) continue;
+          const fd = new FormData(); fd.append('photo', file); fd.append('side', side);
+          await api.post(`/admin/users/${ownerId}/id-photo`, fd, { headers:{'Content-Type':'multipart/form-data'} }).catch(() => {});
+        }
       }
-      const payload = { ...f, owner_id: ownerId || '', university_ids: selUnis };
+      const payload = { ...f, owner_id: ownerId || '', university_ids: selectedUnis };
       const r = await api.post('/admin/properties', payload);
       setPropId(r.data.id);
       setStep(3);
@@ -541,6 +565,25 @@ function AddPropertyModal({ onClose, onSaved }) {
                   <label className="label">YouTube Video ID (optional)</label>
                   <input className="input" value={f.youtube_video_id} onChange={e=>setF(p=>({...p,youtube_video_id:e.target.value}))} placeholder="e.g. dQw4w9WgXcQ" />
                 </div>
+                {/* GPS Coordinates */}
+                <div className="col-span-2">
+                  <label className="label">GPS Coordinates (optional — zone manager must be physically at the property)</label>
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={extractGps} disabled={gpsLoading}
+                      className="btn-sm bg-slate-800 text-white hover:bg-slate-700 shrink-0 gap-1.5">
+                      <MapPin size={13}/>{gpsLoading ? 'Getting location…' : f.latitude ? 'Re-extract' : 'Extract Coordinates'}
+                    </button>
+                    {f.latitude && f.longitude && (
+                      <span className="text-xs font-mono text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg">
+                        {parseFloat(f.latitude).toFixed(6)}, {parseFloat(f.longitude).toFixed(6)}
+                      </span>
+                    )}
+                    {!f.latitude && !gpsLoading && (
+                      <span className="text-xs text-slate-400">No coordinates captured</span>
+                    )}
+                  </div>
+                  {gpsErr && <p className="text-xs text-red-600 mt-1">{gpsErr}</p>}
+                </div>
               </div>
               {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
               <div className="flex justify-end gap-3 pt-2">
@@ -616,6 +659,24 @@ function AddPropertyModal({ onClose, onSaved }) {
                   <div>
                     <label className="label">Initial Password *</label>
                     <input className="input" type="password" value={ownerForm.password} onChange={e=>setOwnerForm(p=>({...p,password:e.target.value}))} required minLength={6} />
+                  </div>
+                  {/* National ID upload — optional */}
+                  <div className="col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">National ID (optional — both sides)</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">ID Front Side</label>
+                        <input type="file" accept="image/*" className="input text-xs py-2"
+                          onChange={e => setIdFront(e.target.files[0] || null)} />
+                        {idFront && <p className="text-xs text-green-600 mt-1">{idFront.name}</p>}
+                      </div>
+                      <div>
+                        <label className="label">ID Back Side</label>
+                        <input type="file" accept="image/*" className="input text-xs py-2"
+                          onChange={e => setIdBack(e.target.files[0] || null)} />
+                        {idBack && <p className="text-xs text-green-600 mt-1">{idBack.name}</p>}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -890,6 +951,43 @@ function PropertyDetail() {
         </div>
       </div>
 
+      {/* Nearby properties warning — shown when GPS present */}
+      {prop.nearby && prop.nearby.length > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-5">
+          <div className="flex items-start gap-3">
+            <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5"/>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-amber-800 text-sm">Possible duplicate — {prop.nearby.length} nearby listing{prop.nearby.length>1?'s':''} within 200 m</p>
+              <p className="text-xs text-amber-700 mt-0.5 mb-3">Review these before approving to confirm this is a genuinely new listing:</p>
+              <div className="space-y-1.5">
+                {prop.nearby.map(n => (
+                  <div key={n.id} className="flex items-center justify-between bg-white rounded-xl px-3 py-2 text-xs border border-amber-200">
+                    <span className="font-medium text-slate-800">{n.name}</span>
+                    <div className="flex items-center gap-3 text-slate-500">
+                      <span>{n.area||'—'}</span>
+                      <StatusBadge status={n.status}/>
+                      <span className="font-mono text-amber-700">{Math.round(n.distance_m)} m away</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GPS coordinates badge */}
+      {prop.latitude && prop.longitude && (
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <MapPin size={13} className="text-green-600"/>
+          <span className="font-mono bg-green-50 border border-green-200 text-green-700 px-2 py-0.5 rounded">
+            GPS: {parseFloat(prop.latitude).toFixed(6)}, {parseFloat(prop.longitude).toFixed(6)}
+          </span>
+          <a href={`https://www.google.com/maps?q=${prop.latitude},${prop.longitude}`} target="_blank" rel="noreferrer"
+            className="text-primary hover:underline">View on map →</a>
+        </div>
+      )}
+
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-2">
@@ -1053,12 +1151,12 @@ function UsersList() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>{['Name','Email','Phone','Status','Properties','Action'].map(h=>(
+              <tr>{['Name','Email','Phone','Status','Properties','ID Docs','Action'].map(h=>(
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {users.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No users found</td></tr>}
+              {users.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No users found</td></tr>}
               {users.map(u => (
                 <tr key={u.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{u.name}</td>
@@ -1071,6 +1169,26 @@ function UsersList() {
                      : <span className="badge-gray">Active</span>}
                   </td>
                   <td className="px-4 py-3 text-slate-500">{u.property_count || 0}</td>
+                  <td className="px-4 py-3">
+                    {(u.id_front_url || u.id_back_url) ? (
+                      <div className="flex gap-1.5">
+                        {u.id_front_url && (
+                          <a href={u.id_front_url} target="_blank" rel="noreferrer"
+                            className="block w-10 h-10 rounded-lg overflow-hidden border border-slate-200 hover:border-primary transition-colors shrink-0">
+                            <img src={u.id_front_url} alt="ID front" className="w-full h-full object-cover"/>
+                          </a>
+                        )}
+                        {u.id_back_url && (
+                          <a href={u.id_back_url} target="_blank" rel="noreferrer"
+                            className="block w-10 h-10 rounded-lg overflow-hidden border border-slate-200 hover:border-primary transition-colors shrink-0">
+                            <img src={u.id_back_url} alt="ID back" className="w-full h-full object-cover"/>
+                          </a>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-400">No ID</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
                       {u.status === 'pending_verification' && (

@@ -56,17 +56,28 @@ function checkPwd(string $pw, string $hash): bool {
 // ─── Database ──────────────────────────────────────────────────
 function db(): PDO {
     static $pdo = null;
-    if (!$pdo) $pdo = new PDO(
+    if (!$pdo) { $pdo = new PDO(
         'mysql:host='.DB_HOST.';dbname='.DB_NAME.';charset=utf8mb4', DB_USER, DB_PASS,
         [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
          PDO::MYSQL_ATTR_INIT_COMMAND=>"SET NAMES utf8mb4"]
-    );
+    ); }
     return $pdo;
 }
 function q(string $sql, array $p = []): array  { $st = db()->prepare($sql); $st->execute($p); return $st->fetchAll(); }
 function q1(string $sql, array $p = []): ?array { $r = q($sql, $p); return $r ? $r[0] : null; }
 function qx(string $sql, array $p = []): int   { $st = db()->prepare($sql); $st->execute($p); return (int)db()->lastInsertId(); }
 function qn(string $sql, array $p = []): int   { $st = db()->prepare($sql); $st->execute($p); return $st->rowCount(); }
+
+function migrate(): void {
+    static $done = false; if ($done) return; $done = true;
+    $pdo = db();
+    foreach ([
+        "ALTER TABLE properties ADD COLUMN latitude DECIMAL(10,8) NULL",
+        "ALTER TABLE properties ADD COLUMN longitude DECIMAL(11,8) NULL",
+        "ALTER TABLE users ADD COLUMN id_front_url VARCHAR(500) NULL",
+        "ALTER TABLE users ADD COLUMN id_back_url VARCHAR(500) NULL",
+    ] as $sql) { try { $pdo->exec($sql); } catch(\PDOException $e) {} }
+}
 
 // ─── Auth Helpers ──────────────────────────────────────────────
 function authUser(): array {
@@ -1012,7 +1023,22 @@ function routeAdmin(array $parts, string $method): void {
         $tenants   = q("SELECT t.*,r.room_type FROM tenants t JOIN rooms r ON r.id=t.room_id WHERE t.property_id=?", [$pid]);
         $verif     = q1('SELECT * FROM verification_records WHERE property_id=?', [$pid]);
         $manager   = q1("SELECT u.id,u.name,u.email,u.phone FROM property_manager_assignments pma JOIN users u ON u.id=pma.manager_id WHERE pma.property_id=? AND pma.is_active=1", [$pid]);
-        ok(array_merge($prop,['photos'=>$photos,'amenities'=>$amenities,'rooms'=>$rooms,'tenants'=>$tenants,'verification'=>$verif,'manager'=>$manager]));
+        // Nearby properties (within ~200 m radius) using Haversine — only when GPS present
+        $nearby = [];
+        if (!empty($prop['latitude']) && !empty($prop['longitude'])) {
+            $lat = (float)$prop['latitude']; $lng = (float)$prop['longitude'];
+            $nearby = q("SELECT p.id, p.name, p.status, p.area,
+                                (6371000 * acos(GREATEST(-1, LEAST(1,
+                                  cos(radians(?)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians(?)) +
+                                  sin(radians(?)) * sin(radians(p.latitude))
+                                )))) AS distance_m
+                         FROM properties p
+                         WHERE p.latitude IS NOT NULL AND p.id != ?
+                         HAVING distance_m < 200
+                         ORDER BY distance_m LIMIT 10",
+                        [$lat, $lng, $lat, $pid]);
+        }
+        ok(array_merge($prop,['photos'=>$photos,'amenities'=>$amenities,'rooms'=>$rooms,'tenants'=>$tenants,'verification'=>$verif,'manager'=>$manager,'nearby'=>$nearby]));
     }
 
     // ── POST /api/admin/properties — admin or geto manager creates a property ─
@@ -1025,13 +1051,15 @@ function routeAdmin(array $parts, string $method): void {
         $ownerId = !empty($b['owner_id']) ? (int)$b['owner_id'] : (int)$u['id'];
         // Admin → auto-approved; zone_manager → pending (needs admin review)
         $status = $isAdmin ? 'approved' : 'pending';
-        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,highlight,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,status,created_by,created_by_role) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,highlight,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,latitude,longitude,status,created_by,created_by_role) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [$b['name'], $b['property_type']??'Hostel', $b['description']??'',
              $b['address']??'', $b['landmark']??null, $b['area']??'',
              !empty($b['highlight']) ? $b['highlight'] : null,
              (int)$b['nearest_university_id'], $zid, $cid,
-             $ownerId, $b['youtube_video_id']??null, $status,
-             (int)$u['id'], $u['role']]);
+             $ownerId, $b['youtube_video_id']??null,
+             !empty($b['latitude']) ? (float)$b['latitude'] : null,
+             !empty($b['longitude']) ? (float)$b['longitude'] : null,
+             $status, (int)$u['id'], $u['role']]);
         // Populate junction table with all selected universities
         $uniIds = array_filter(array_map('intval', (array)($b['university_ids'] ?? [(int)$b['nearest_university_id']])));
         if (!in_array((int)$b['nearest_university_id'], $uniIds)) $uniIds[] = (int)$b['nearest_university_id'];
@@ -1261,7 +1289,7 @@ function routeAdmin(array $parts, string $method): void {
     if ($method === 'GET' && $sub === 'users') {
         $role = $_GET['role'] ?? null;
         $sql = "SELECT u.id,u.name,u.email,u.phone,u.role,u.status,u.verified,u.business_name,
-                       u.zone_id,u.created_at,z.code AS zone_code,
+                       u.zone_id,u.created_at,z.code AS zone_code,u.id_front_url,u.id_back_url,
                        (SELECT COUNT(*) FROM properties p WHERE p.owner_id=u.id) AS property_count
                 FROM users u LEFT JOIN zones z ON z.id=u.zone_id WHERE 1=1";
         $params = [];
@@ -1345,6 +1373,29 @@ function routeAdmin(array $parts, string $method): void {
                  [$b['name'],$b['email'],$b['phone'],hashPwd($b['password']),'zone_manager','active',
                   (int)$b['zone_id'],$rid,1]);
         created(['message'=>'Zone manager created.','userId'=>$id,'zone'=>$zone]);
+    }
+
+    // ── POST /api/admin/users/:id/id-photo — upload National ID photo ─
+    if ($method === 'POST' && $sub === 'users' && is_numeric($sub2) && $sub3 === 'id-photo') {
+        requireAdmin();
+        $uid  = (int)$sub2;
+        $side = $_POST['side'] ?? 'front'; // 'front' or 'back'
+        if (!in_array($side, ['front','back'])) err(400, 'side must be front or back.');
+        if (empty($_FILES['photo'])) err(400, 'No photo uploaded.');
+        $file = $_FILES['photo'];
+        if ($file['error'] !== UPLOAD_ERR_OK) err(400, 'Upload error.');
+        if (!str_starts_with($file['type'], 'image/')) err(400, 'Image files only.');
+        $docroot = rtrim($_SERVER['DOCUMENT_ROOT'], '/');
+        $dir = "$docroot/uploads/user-ids/$uid";
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+        $name = "id_{$side}_".time().'.webp';
+        $dest = "$dir/$name";
+        try { toWebP($file['tmp_name'], $dest); }
+        catch (Exception) { move_uploaded_file($file['tmp_name'], $dest); }
+        $url  = "/uploads/user-ids/$uid/$name";
+        $col  = $side === 'front' ? 'id_front_url' : 'id_back_url';
+        qn("UPDATE users SET $col=? WHERE id=?", [$url, $uid]);
+        ok(['url'=>$url,'side'=>$side]);
     }
 
     // ── POST /api/admin/assign-manager — assign manager to property
@@ -1559,6 +1610,8 @@ if ($method === 'POST' && ($parts[0] ?? '') === 'track') {
     $pdo->prepare("INSERT INTO page_views (page, ip_hash) VALUES (?, ?)")->execute([$page, $hash]);
     ok(['tracked' => true]);
 }
+
+migrate();
 
 switch ($parts[0] ?? '') {
     case 'health':       routeHealth(); break;
