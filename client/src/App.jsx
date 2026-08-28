@@ -1,6 +1,7 @@
-import React, { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import React, { lazy, Suspense, useEffect } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import api from './api';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import Home from './pages/Home';
@@ -13,7 +14,7 @@ const OwnerPortal  = lazy(() => import('./pages/OwnerPortal'));
 const StudentDash  = lazy(() => import('./pages/StudentDashboard'));
 
 function Loading() {
-  return <div className="flex items-center justify-center min-h-[60vh] text-primary font-semibold">Inapakia...</div>;
+  return <div className="flex items-center justify-center min-h-[60vh] text-primary font-semibold">Loading...</div>;
 }
 
 // Redirect if already logged into the wrong area
@@ -52,11 +53,20 @@ function StaffLayout({ children }) {
   return <div className="min-h-screen bg-gray-50">{children}</div>;
 }
 
+function PageTracker() {
+  const location = useLocation();
+  useEffect(() => {
+    api.post('/track', { page: location.pathname }).catch(() => {});
+  }, [location.pathname]);
+  return null;
+}
+
 function AppRoutes() {
   const { isStaff, isOwner, isManager, isStudent, isLoggedIn } = useAuth();
 
   return (
     <Suspense fallback={<Loading />}>
+      <PageTracker />
       <Routes>
         {/* ── Public routes ── */}
         <Route path="/" element={<PublicLayout><Home /></PublicLayout>} />

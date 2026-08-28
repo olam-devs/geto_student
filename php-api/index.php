@@ -962,8 +962,11 @@ function routeAdmin(array $parts, string $method): void {
         $pendingFromManagers = $isAdmin
             ? (int)(q1("SELECT COUNT(*) AS cnt FROM properties WHERE status='pending' AND created_by_role='zone_manager'")['cnt'] ?? 0)
             : 0;
+        $visits_today = $isAdmin ? (int)(q1("SELECT COUNT(*) AS cnt FROM page_views WHERE DATE(created_at)=CURDATE()")['cnt'] ?? 0) : null;
+        $visits_total = $isAdmin ? (int)(q1("SELECT COUNT(*) AS cnt FROM page_views")['cnt'] ?? 0) : null;
         ok(['global'=>$global,'zones'=>$byZone,'my_zone'=>!$isAdmin?array_merge($ps??[],$rs??[],$bs??[]):null,
-            'manager_stats'=>$managerStats,'pending_from_managers'=>$pendingFromManagers]);
+            'manager_stats'=>$managerStats,'pending_from_managers'=>$pendingFromManagers,
+            'visits_today'=>$visits_today,'visits_total'=>$visits_total]);
     }
 
     // ── GET /api/admin/properties ─────────────────────────────
@@ -1538,6 +1541,23 @@ $method = $_SERVER['REQUEST_METHOD'];
 if ($method === 'GET' && ($parts[0] ?? '') === 'admin' && in_array($parts[1] ?? '', ['room-types','property-types']) && !($parts[2] ?? '')) {
     $tbl = ($parts[1] === 'room-types') ? 'room_types' : 'property_types';
     ok(q("SELECT id,name,sort_order FROM $tbl ORDER BY sort_order,name"));
+}
+
+// ── POST /api/track — public page-view tracker (no auth) ────────
+if ($method === 'POST' && ($parts[0] ?? '') === 'track') {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS page_views (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        page VARCHAR(255) NOT NULL DEFAULT '/',
+        ip_hash CHAR(64) NOT NULL DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_date (created_at)
+    )");
+    $b    = body();
+    $page = substr(trim($b['page'] ?? '/'), 0, 255);
+    $ip   = $_SERVER['HTTP_CF_CONNECTING_IP'] ?? $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
+    $hash = hash('sha256', $ip . date('Y-m-d'));  // daily rotation for privacy
+    $pdo->prepare("INSERT INTO page_views (page, ip_hash) VALUES (?, ?)")->execute([$page, $hash]);
+    ok(['tracked' => true]);
 }
 
 switch ($parts[0] ?? '') {

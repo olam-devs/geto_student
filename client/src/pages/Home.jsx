@@ -105,30 +105,30 @@ export default function Home() {
             <div className="order-2 lg:order-1">
               <div className="inline-flex items-center gap-2 bg-primary-50 border border-primary-100 text-primary-700 text-xs font-semibold px-3.5 py-1.5 rounded-full mb-6">
                 <MapPin size={11} strokeWidth={2.5}/>
-                Dar es Salaam · Mbeya · {universities.length || 30}+ Vyuo Vikuu
+                Dar es Salaam · Mbeya · {universities.length || 30}+ Universities
               </div>
 
               <h1 className="font-display font-bold leading-[1.05] tracking-tight text-slate-900 mb-5"
                 style={{ fontSize: 'clamp(36px,5.5vw,64px)' }}>
-                Pata Chumba<br/>
-                <span className="text-primary-700">Salama</span> Karibu<br/>
-                na <span className="text-accent-600">Chuo Chako.</span>
+                Find Safe Rooms<br/>
+                <span className="text-primary-700">Near Your</span><br/>
+                <span className="text-accent-600">Campus.</span>
               </h1>
 
               <p className="text-slate-500 text-base sm:text-lg leading-relaxed mb-8 max-w-[480px]">
-                Bila orodha za uongo. Bila ada zilizofichwa. Kila mali kwenye Geto Student inakaguliwa kimwili kabla ya wanafunzi kuiona.
+                No fake listings. No hidden fees. Every property on Geto Student is physically inspected before students see it.
               </p>
 
               {/* Stats */}
               <div className="flex flex-wrap items-center gap-6 sm:gap-10 mb-8">
                 <div>
                   <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">200+</p>
-                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Vyumba</p>
+                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Rooms</p>
                 </div>
                 <div className="w-px h-12 bg-slate-200"/>
                 <div>
                   <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{universities.length || 30}+</p>
-                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Vyuo Vikuu</p>
+                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Universities</p>
                 </div>
               </div>
 
@@ -136,11 +136,11 @@ export default function Home() {
               <div className="flex flex-wrap gap-3">
                 <button onClick={() => navigate('/find-room')}
                   className="inline-flex items-center gap-2 bg-primary-700 hover:bg-primary-800 text-white font-bold px-7 py-3.5 rounded-xl text-sm transition-all shadow-lg shadow-primary-700/25 hover:shadow-primary-700/40 hover:-translate-y-0.5">
-                  Tafuta Chumba <ArrowRight size={15}/>
+                  Find a Room <ArrowRight size={15}/>
                 </button>
                 <button onClick={() => navigate('/auth?tab=register')}
                   className="inline-flex items-center gap-2 border-2 border-slate-200 hover:border-primary-500 hover:text-primary-700 text-slate-600 font-bold px-7 py-3.5 rounded-xl text-sm transition-all">
-                  Sajili Mali Yako
+                  List Your Property
                 </button>
               </div>
 
@@ -188,11 +188,11 @@ export default function Home() {
                   </div>
                   <div>
                     <p className="text-xs text-white/60 font-medium">Geto Verified</p>
-                    <p className="text-sm font-bold">{propCount || 24}+ mali zilizokaguliwa</p>
+                    <p className="text-sm font-bold">{propCount || 24}+ verified properties</p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-white/60">Kuanzia</p>
+                  <p className="text-xs text-white/60">Starting from</p>
                   <p className="text-sm font-bold text-accent-400">150,000 TZS/mo</p>
                 </div>
               </div>
@@ -223,7 +223,7 @@ export default function Home() {
           </div>
           <button onClick={() => navigate('/find-room')}
             className="hidden sm:flex items-center gap-1 text-sm font-semibold text-accent-600 hover:text-accent-700 transition-colors">
-            Vyumba vyote <ArrowRight size={14}/>
+            View all <ArrowRight size={14}/>
           </button>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -274,7 +274,7 @@ export default function Home() {
           </div>
           <button onClick={() => navigate('/find-room?verified_only=true')}
             className="hidden sm:flex items-center gap-1 text-sm font-semibold text-accent-600 hover:text-accent-700 transition-colors">
-            Ona zote <ArrowRight size={14}/>
+            View all <ArrowRight size={14}/>
           </button>
         </div>
         {featured.length === 0 ? (
@@ -287,7 +287,7 @@ export default function Home() {
           </div>
         )}
         <div className="text-center mt-8 sm:hidden">
-          <button onClick={() => navigate('/find-room')} className="btn-outline">Tafuta vyumba vyote →</button>
+          <button onClick={() => navigate('/find-room')} className="btn-outline">Browse all rooms →</button>
         </div>
       </section>
 
@@ -318,15 +318,15 @@ export default function Home() {
           <div className="absolute -right-16 -top-16 w-72 h-72 rounded-full bg-white/5 pointer-events-none"/>
           <div className="absolute -right-4 -bottom-14 w-52 h-52 rounded-full bg-accent-600/15 pointer-events-none"/>
           <div className="relative z-10">
-            <p className="text-xs font-bold uppercase tracking-widest text-accent-400 mb-2">Kwa Wamiliki wa Mali</p>
-            <h2 className="font-display font-bold text-2xl sm:text-3xl text-white mb-2">Una nyumba au hostel?</h2>
+            <p className="text-xs font-bold uppercase tracking-widest text-accent-400 mb-2">For Property Owners</p>
+            <h2 className="font-display font-bold text-2xl sm:text-3xl text-white mb-2">Have a house or hostel?</h2>
             <p className="text-slate-400 text-sm max-w-md leading-relaxed">
-              Sajili mali yako, thibitisha, na wafikia maelfu ya wanafunzi wa vyuo vikuu Tanzania.
+              List your property, get verified, and reach thousands of university students across Tanzania.
             </p>
           </div>
           <button onClick={() => navigate('/auth?tab=register')}
             className="btn-accent relative z-10 shrink-0 text-sm py-3 px-8">
-            Sajili Mali Yako <ChevronRight size={16}/>
+            List Your Property <ChevronRight size={16}/>
           </button>
         </div>
       </section>

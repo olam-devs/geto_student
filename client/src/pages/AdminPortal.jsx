@@ -11,16 +11,16 @@ import api from '../api';
 
 // ─── Sidebar nav ───────────────────────────────────────────────
 const ADMIN_NAV = [
-  { path: '/admin',          icon: LayoutDashboard, label: 'Dashibodi' },
-  { path: '/admin/properties', icon: Building2,    label: 'Mali / Nyumba' },
-  { path: '/admin/users',    icon: Users,           label: 'Watumiaji' },
-  { path: '/admin/bookings', icon: CheckSquare,     label: 'Uhifadhi' },
+  { path: '/admin',          icon: LayoutDashboard, label: 'Dashboard' },
+  { path: '/admin/properties', icon: Building2,    label: 'Properties' },
+  { path: '/admin/users',    icon: Users,           label: 'Users' },
+  { path: '/admin/bookings', icon: CheckSquare,     label: 'Bookings' },
 ];
 const ADMIN_ONLY_NAV = [
-  { path: '/admin/zones',        icon: Map,           label: 'Kanda & Maeneo' },
-  { path: '/admin/universities', icon: GraduationCap, label: 'Vyuo & Taasisi' },
-  { path: '/admin/staff',        icon: Shield,        label: 'Wasimamizi wa Kanda' },
-  { path: '/admin/types',        icon: Plus,          label: 'Aina za Mali/Vyumba' },
+  { path: '/admin/zones',        icon: Map,           label: 'Zones & Areas' },
+  { path: '/admin/universities', icon: GraduationCap, label: 'Universities' },
+  { path: '/admin/staff',        icon: Shield,        label: 'Zone Managers' },
+  { path: '/admin/types',        icon: Plus,          label: 'Property & Room Types' },
 ];
 
 function Sidebar({ open, onClose }) {
@@ -40,21 +40,21 @@ function Sidebar({ open, onClose }) {
           <div>
             <div className="font-display font-bold text-sm leading-none">Geto Admin</div>
             <div className="text-xs text-white/50 mt-0.5 capitalize">
-              {isAdmin ? 'Super Admin' : `Kanda ${user?.zone_code || ''}`}
+              {isAdmin ? 'Super Admin' : `Zone ${user?.zone_code || ''}`}
             </div>
           </div>
           <button className="lg:hidden ml-auto text-white/60 hover:text-white" onClick={onClose}><X size={20}/></button>
         </div>
         {/* User */}
         <div className="px-5 py-4 border-b border-white/10">
-          <div className="text-xs text-white/50">Umeingia kama</div>
+          <div className="text-xs text-white/50">Logged in as</div>
           <div className="text-sm font-semibold truncate">{user?.name}</div>
           <div className="text-xs text-white/40 truncate">{user?.email}</div>
         </div>
         {/* Zone badge for zone managers */}
         {!isAdmin && user?.zone_name && (
           <div className="mx-5 mt-3 px-3 py-2 bg-accent/20 rounded-xl text-xs text-accent font-semibold">
-            <MapPin size={12} className="inline mr-1"/>Kanda {user.zone_code}: {user.zone_name}
+            <MapPin size={12} className="inline mr-1"/>Zone {user.zone_code}: {user.zone_name}
           </div>
         )}
         {/* Nav */}
@@ -72,7 +72,7 @@ function Sidebar({ open, onClose }) {
         </nav>
         <div className="px-3 pb-5">
           <button onClick={handleLogout} className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm text-white/60 hover:bg-white/10 hover:text-white transition-all">
-            <LogOut size={18}/>Toka
+            <LogOut size={18}/>Logout
           </button>
         </div>
       </aside>
@@ -87,7 +87,7 @@ function TopBar({ onMenuClick }) {
   return (
     <header className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 lg:px-6">
       <button className="lg:hidden p-2 rounded-lg hover:bg-slate-100" onClick={onMenuClick}><Menu size={20}/></button>
-      <h2 className="font-semibold text-slate-800 text-sm">{current?.label || 'Dashibodi'}</h2>
+      <h2 className="font-semibold text-slate-800 text-sm">{current?.label || 'Dashboard'}</h2>
     </header>
   );
 }
@@ -122,26 +122,28 @@ function Dashboard() {
       {isAdmin && (data?.pending_from_managers || 0) > 0 && (
         <div className="bg-amber-50 border border-amber-300 rounded-2xl px-5 py-4 flex items-center justify-between gap-4">
           <div>
-            <p className="font-bold text-amber-800 text-sm">Mali {data.pending_from_managers} zinasubiri idhini yako</p>
-            <p className="text-amber-700 text-xs mt-0.5">Wasimamizi wa kanda wameongeza mali ambazo bado hazijakaguliwa.</p>
+            <p className="font-bold text-amber-800 text-sm">{data.pending_from_managers} properties awaiting your approval</p>
+            <p className="text-amber-700 text-xs mt-0.5">Zone managers have added properties that are not yet reviewed.</p>
           </div>
-          <a href="/admin/properties" className="btn-sm bg-amber-600 text-white hover:bg-amber-700 text-xs shrink-0">Kagua Sasa</a>
+          <a href="/admin/properties" className="btn-sm bg-amber-600 text-white hover:bg-amber-700 text-xs shrink-0">Review Now</a>
         </div>
       )}
 
       {/* Global stats (admin only) */}
       {isAdmin && g && (
         <section>
-          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Takwimu za Mfumo Mzima</h3>
+          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Global Statistics</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            <StatCard label="Wanafunzi"       value={g.total_students}         color="primary" />
-            <StatCard label="Wamiliki"         value={g.total_owners}           color="primary" />
-            <StatCard label="Wasimamizi"       value={g.total_managers}         color="primary" />
-            <StatCard label="Mali Zote"        value={g.total_properties}       sub={`${g.approved_properties} zilizoidhinishwa`} />
-            <StatCard label="Zilizothibitishwa"value={g.verified_properties}    color="green"  />
-            <StatCard label="Uhifadhi Wote"    value={g.total_bookings}         sub={`${g.confirmed_bookings} yaliyothibitishwa`} />
-            <StatCard label="Vyumba Vyote"     value={g.total_rooms}            sub={`${g.occupied_rooms} vinavyokaliwa`} color="accent" />
-            <StatCard label="Wasimamizi Kanda" value={g.total_zone_managers}    />
+            <StatCard label="Students"         value={g.total_students}         color="primary" />
+            <StatCard label="Owners"           value={g.total_owners}           color="primary" />
+            <StatCard label="Managers"         value={g.total_managers}         color="primary" />
+            <StatCard label="All Properties"   value={g.total_properties}       sub={`${g.approved_properties} approved`} />
+            <StatCard label="Verified"         value={g.verified_properties}    color="green"  />
+            <StatCard label="All Bookings"     value={g.total_bookings}         sub={`${g.confirmed_bookings} confirmed`} />
+            <StatCard label="All Rooms"        value={g.total_rooms}            sub={`${g.occupied_rooms} occupied`} color="accent" />
+            <StatCard label="Zone Managers"    value={g.total_zone_managers}    />
+            <StatCard label="Site Visits (Today)" value={data?.visits_today ?? '—'} color="green" />
+            <StatCard label="Site Visits (Total)" value={data?.visits_total ?? '—'} color="primary" />
           </div>
         </section>
       )}
@@ -149,11 +151,11 @@ function Dashboard() {
       {/* Manager property activity table (admin only) */}
       {isAdmin && (data?.manager_stats||[]).length > 0 && (
         <section>
-          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Mali Zilizoongezwa na Wasimamizi</h3>
+          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Properties Added by Managers</h3>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>{['Msimamizi','Simu','Kanda','Zilizoongezwa','Zilizoidhinishwa','Zinasubiri'].map(h=>(
+                <tr>{['Manager','Phone','Zone','Added','Approved','Pending'].map(h=>(
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
                 ))}</tr>
               </thead>
@@ -177,11 +179,11 @@ function Dashboard() {
       {/* Zone breakdown (admin: all zones; zone_manager: their zone) */}
       {isAdmin ? (
         <section>
-          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Kwa Kanda</h3>
+          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">By Zone</h3>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>{['Kanda','Jina','Mali','Zilizoidhinishwa','Zilizothibitishwa','Vyumba','Vinavyokaliwa','Uhifadhi'].map(h=>(
+                <tr>{['Zone','Name','Properties','Approved','Verified','Rooms','Occupied','Bookings'].map(h=>(
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
                 ))}</tr>
               </thead>
@@ -205,16 +207,16 @@ function Dashboard() {
       ) : (
         <section>
           <h3 className="font-display font-bold text-lg text-slate-900 mb-4">
-            Kanda {user?.zone_code} — {user?.zone_name}
+            Zone {user?.zone_code} — {user?.zone_name}
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {data?.my_zone && <>
-              <StatCard label="Mali Zote"      value={data.my_zone.total}         />
-              <StatCard label="Zilizoidhinishwa" value={data.my_zone.approved}    color="green" />
-              <StatCard label="Zilizothibitishwa" value={data.my_zone.verified}   color="primary" />
-              <StatCard label="Vyumba Vyote"   value={data.my_zone.total_rooms}   />
-              <StatCard label="Vinavyokaliwa"  value={data.my_zone.occupied}      color="amber" />
-              <StatCard label="Uhifadhi"       value={data.my_zone.total_bookings} />
+              <StatCard label="Total Properties" value={data.my_zone.total}         />
+              <StatCard label="Approved"         value={data.my_zone.approved}    color="green" />
+              <StatCard label="Verified"         value={data.my_zone.verified}   color="primary" />
+              <StatCard label="Total Rooms"      value={data.my_zone.total_rooms}   />
+              <StatCard label="Occupied"         value={data.my_zone.occupied}      color="amber" />
+              <StatCard label="Bookings"         value={data.my_zone.total_bookings} />
             </>}
           </div>
         </section>
@@ -244,25 +246,25 @@ function PropertiesList() {
     load();
   };
   const reject = async (id) => {
-    const note = prompt('Sababu ya kukataa:');
+    const note = prompt('Reason for rejection:');
     if (!note) return;
     await api.put(`/admin/properties/${id}/reject`, { note });
     load();
   };
   const verify = async (id) => {
-    if (!confirm('Thibitisha mali hii? Itaonekana kama "Geto Verified".')) return;
+    if (!confirm('Verify this property? It will display the "Geto Verified" badge.')) return;
     await api.put(`/admin/properties/${id}/verify`, {
       checklist: { owner_identity:1, location_confirmed:1, rooms_confirmed:1, water_confirmed:1, electricity_confirmed:1, security_confirmed:1, price_confirmed:1 }
     });
     load();
   };
   const unverify = async (id) => {
-    if (!confirm('Ondoa badge ya "Geto Verified" kutoka mali hii?')) return;
+    if (!confirm('Remove the "Geto Verified" badge from this property?')) return;
     await api.put(`/admin/properties/${id}/unverify`);
     load();
   };
   const deleteProp = async (id) => {
-    if (!confirm('Futa mali hii kabisa? Hatua hii haiwezi kurudishwa.')) return;
+    if (!confirm('Permanently delete this property? This cannot be undone.')) return;
     await api.delete(`/admin/properties/${id}`);
     load();
   };
@@ -275,47 +277,47 @@ function PropertiesList() {
         {['','pending','approved','rejected'].map(s => (
           <button key={s} onClick={() => setFilter(s)}
             className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${filter===s?'bg-primary text-white':'bg-white border border-slate-200 text-slate-600 hover:border-primary'}`}>
-            {s===''?'Zote':s==='pending'?'Zinasubiri':s==='approved'?'Zilizoidhinishwa':'Zilizokataliwa'}
+            {s===''?'All':s==='pending'?'Pending':s==='approved'?'Approved':'Rejected'}
           </button>
         ))}
         </div>
-        <button onClick={() => setAddOpen(true)} className="btn-primary text-sm shrink-0"><Plus size={15}/>Ongeza Mali</button>
+        <button onClick={() => setAddOpen(true)} className="btn-primary text-sm shrink-0"><Plus size={15}/>Add Property</button>
       </div>
       {!isAdmin && (
         <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-700 font-medium flex items-center gap-2">
-          <span>Mali unayoiongeza itaenda kwa idhini ya Admin kabla ya kuchapishwa.</span>
+          <span>Properties you add will require Admin approval before being published.</span>
         </div>
       )}
       {addOpen && <AddPropertyModal onClose={() => setAddOpen(false)} onSaved={load} />}
       {loading ? <Spinner /> : (
         <div className="space-y-3">
-          {props.length === 0 && <EmptyState label="Hakuna mali" />}
+          {props.length === 0 && <EmptyState label="No properties" />}
           {props.map(p => (
             <div key={p.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col md:flex-row md:items-center gap-4">
               {p.main_photo && <img src={p.main_photo} alt="" className="w-full md:w-24 h-20 object-cover rounded-xl shrink-0" />}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-slate-900 truncate">{p.name}</span>
-                  {p.verified ? <span className="badge-green">Imethibitishwa</span> : null}
+                  {p.verified ? <span className="badge-green">Verified</span> : null}
                   <StatusBadge status={p.status} />
                 </div>
                 <div className="text-xs text-slate-500 mt-0.5">{p.area} · {p.university_name}</div>
-                <div className="text-xs text-slate-400">Mmiliki: {p.owner_name} · {p.owner_phone} · Kanda {p.zone_code||'—'}</div>
-                <div className="text-xs text-slate-400">Vyumba: {p.total_rooms||0} · Vinavyokaliwa: {p.occupied||0}</div>
+                <div className="text-xs text-slate-400">Owner: {p.owner_name} · {p.owner_phone} · Zone {p.zone_code||'—'}</div>
+                <div className="text-xs text-slate-400">Rooms: {p.total_rooms||0} · Occupied: {p.occupied||0}</div>
               </div>
               <div className="flex items-center gap-2 flex-wrap shrink-0">
                 {p.status === 'pending' && <>
-                  <button onClick={() => approve(p.id)} className="btn-sm bg-green-600 text-white hover:bg-green-700"><Check size={13}/>Idhinisha</button>
-                  <button onClick={() => reject(p.id)}  className="btn-sm bg-red-600 text-white hover:bg-red-700"><XCircle size={13}/>Kataa</button>
+                  <button onClick={() => approve(p.id)} className="btn-sm bg-green-600 text-white hover:bg-green-700"><Check size={13}/>Approve</button>
+                  <button onClick={() => reject(p.id)}  className="btn-sm bg-red-600 text-white hover:bg-red-700"><XCircle size={13}/>Reject</button>
                 </>}
                 {p.status === 'approved' && !p.verified && (
-                  <button onClick={() => verify(p.id)} className="btn-sm bg-primary text-white hover:bg-primary/80"><Shield size={13}/>Thibitisha</button>
+                  <button onClick={() => verify(p.id)} className="btn-sm bg-primary text-white hover:bg-primary/80"><Shield size={13}/>Verify</button>
                 )}
                 {p.verified && (
-                  <button onClick={() => unverify(p.id)} className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Ondoa Uthibitisho</button>
+                  <button onClick={() => unverify(p.id)} className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Remove Verification</button>
                 )}
                 <button onClick={() => deleteProp(p.id)} className="btn-sm border border-red-200 text-red-500 hover:bg-red-50"><Trash2 size={13}/></button>
-                <Link to={`/admin/properties/${p.id}`} className="btn-sm border border-slate-200 text-slate-600 hover:border-primary hover:text-primary"><Eye size={13}/>Angalia</Link>
+                <Link to={`/admin/properties/${p.id}`} className="btn-sm border border-slate-200 text-slate-600 hover:border-primary hover:text-primary"><Eye size={13}/>View</Link>
               </div>
             </div>
           ))}
@@ -400,7 +402,7 @@ function AddPropertyModal({ onClose, onSaved }) {
     e.preventDefault(); setErr(''); setSaving(true);
     try {
       setStep(2); setSaving(false);
-    } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); setSaving(false); }
+    } catch (e) { setErr(e.response?.data?.message || 'An error occurred.'); setSaving(false); }
   };
 
   const saveStep2 = async (e) => {
@@ -418,7 +420,7 @@ function AddPropertyModal({ onClose, onSaved }) {
       const r = await api.post('/admin/properties', payload);
       setPropId(r.data.id);
       setStep(3);
-    } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+    } catch (e) { setErr(e.response?.data?.message || 'An error occurred.'); }
     finally { setSaving(false); }
   };
 
@@ -430,7 +432,7 @@ function AddPropertyModal({ onClose, onSaved }) {
       const r = await api.get(`/admin/properties/${propId}`);
       setRooms(r.data.rooms || []);
       setRf({ room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared', description:'' });
-    } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+    } catch (e) { setErr(e.response?.data?.message || 'An error occurred.'); }
     finally { setSaving(false); }
   };
 
@@ -448,7 +450,7 @@ function AddPropertyModal({ onClose, onSaved }) {
       <div className="modal-box max-w-2xl">
         <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-100">
           <h2 className="font-display font-bold text-lg text-slate-900">
-            {step === 1 ? 'Ongeza Mali Mpya' : `Ongeza Vyumba — ${f.name}`}
+            {step === 1 ? 'Add New Property' : `Add Rooms — ${f.name}`}
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
         </div>
@@ -456,7 +458,7 @@ function AddPropertyModal({ onClose, onSaved }) {
         <div className="p-6 overflow-y-auto max-h-[70vh]">
           {/* Step indicator */}
           <div className="flex items-center gap-2 mb-6 text-xs font-semibold">
-            {[['1','Maelezo'],['2','Mmiliki'],['3','Vyumba']].map(([n,label],i) => (
+            {[['1','Details'],['2','Owner'],['3','Rooms']].map(([n,label],i) => (
               <React.Fragment key={n}>
                 {i>0 && <div className="flex-1 h-px bg-slate-200"/>}
                 <span className={`w-6 h-6 rounded-full flex items-center justify-center ${step>i?'bg-primary text-white':'bg-slate-200 text-slate-500'}`}>{n}</span>
@@ -469,25 +471,25 @@ function AddPropertyModal({ onClose, onSaved }) {
             <form onSubmit={saveStep1} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="label">Jina la Mali *</label>
-                  <input className="input" value={f.name} onChange={e=>setF(p=>({...p,name:e.target.value}))} required placeholder="k.m. Amani Hostel" />
+                  <label className="label">Property Name *</label>
+                  <input className="input" value={f.name} onChange={e=>setF(p=>({...p,name:e.target.value}))} required placeholder="e.g. Amani Hostel" />
                 </div>
                 <div>
-                  <label className="label">Aina ya Mali *</label>
+                  <label className="label">Property Type *</label>
                   <select className="input" value={f.property_type} onChange={e=>setF(p=>({...p,property_type:e.target.value}))}>
                     {TYPES.map(t => <option key={t}>{t}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="label">Chuo Kikuu (la Kwanza) *</label>
+                  <label className="label">Primary University *</label>
                   <select className="input" value={f.nearest_university_id} onChange={e=>onUniChange(e.target.value)} required>
-                    <option value="">Chagua chuo…</option>
+                    <option value="">Select university…</option>
                     {unis.map(u => <option key={u.id} value={u.id}>{u.name} ({u.short_name})</option>)}
                   </select>
                 </div>
                 {/* Multi-uni selector */}
                 <div className="col-span-2">
-                  <label className="label">Vyuo Vingine Karibu (chagua zaidi ya kimoja)</label>
+                  <label className="label">Other Nearby Universities (select multiple)</label>
                   <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 bg-slate-50 rounded-xl border border-slate-200">
                     {unis.map(u => {
                       const sel = selectedUnis.includes(String(u.id));
@@ -499,51 +501,51 @@ function AddPropertyModal({ onClose, onSaved }) {
                       );
                     })}
                   </div>
-                  {selectedUnis.length > 0 && <p className="text-xs text-primary mt-1">{selectedUnis.length} chuo kimechaguliwa</p>}
+                  {selectedUnis.length > 0 && <p className="text-xs text-primary mt-1">{selectedUnis.length} university selected</p>}
                 </div>
                 <div>
-                  <label className="label">Kanda</label>
+                  <label className="label">Zone</label>
                   <select className="input" value={f.zone_id} onChange={e=>onZoneChange(e.target.value)}>
-                    <option value="">Chagua kanda…</option>
+                    <option value="">Select zone…</option>
                     {zones.map(z => <option key={z.id} value={z.id}>{z.code} — {z.name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="label">Cluster</label>
                   <select className="input" value={f.cluster_id} onChange={e=>setF(p=>({...p,cluster_id:e.target.value}))}>
-                    <option value="">Chagua cluster…</option>
+                    <option value="">Select cluster…</option>
                     {clusters.map(c => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="label">Eneo (Area)</label>
-                  <input className="input" value={f.area} onChange={e=>setF(p=>({...p,area:e.target.value}))} placeholder="k.m. Ubungo" />
+                  <label className="label">Area</label>
+                  <input className="input" value={f.area} onChange={e=>setF(p=>({...p,area:e.target.value}))} placeholder="e.g. Ubungo" />
                 </div>
                 <div className="col-span-2">
-                  <label className="label">Highlight (hiari — muhtasari mfupi utakaoonekana kwenye kadi)</label>
-                  <input className="input" value={f.highlight} onChange={e=>setF(p=>({...p,highlight:e.target.value}))} placeholder="k.m. Karibu na chuo, umeme wa jua, maji kila wakati" />
+                  <label className="label">Highlight (optional — short card tagline shown to students)</label>
+                  <input className="input" value={f.highlight} onChange={e=>setF(p=>({...p,highlight:e.target.value}))} placeholder="e.g. Near campus, solar power, water 24/7" />
                 </div>
                 <div className="col-span-2">
-                  <label className="label">Anwani</label>
-                  <input className="input" value={f.address} onChange={e=>setF(p=>({...p,address:e.target.value}))} placeholder="k.m. Barabara ya UDSM, Mlimani" />
+                  <label className="label">Address</label>
+                  <input className="input" value={f.address} onChange={e=>setF(p=>({...p,address:e.target.value}))} placeholder="e.g. UDSM Road, Mlimani" />
                 </div>
                 <div className="col-span-2">
-                  <label className="label">Kivutio / Mahali Karibu (kwa utafutaji wa wanafunzi)</label>
-                  <input className="input" value={f.landmark} onChange={e=>setF(p=>({...p,landmark:e.target.value}))} placeholder="k.m. karibu na Mlimani Mall, nyuma ya UDSM Gate 3" />
+                  <label className="label">Landmark / Nearby Reference</label>
+                  <input className="input" value={f.landmark} onChange={e=>setF(p=>({...p,landmark:e.target.value}))} placeholder="e.g. Near Mlimani Mall, behind UDSM Gate 3" />
                 </div>
                 <div className="col-span-2">
-                  <label className="label">Maelezo</label>
-                  <textarea className="input" rows={3} value={f.description} onChange={e=>setF(p=>({...p,description:e.target.value}))} placeholder="Eleza mali hii…" />
+                  <label className="label">Description</label>
+                  <textarea className="input" rows={3} value={f.description} onChange={e=>setF(p=>({...p,description:e.target.value}))} placeholder="Describe this property…" />
                 </div>
                 <div>
-                  <label className="label">YouTube Video ID (hiari)</label>
-                  <input className="input" value={f.youtube_video_id} onChange={e=>setF(p=>({...p,youtube_video_id:e.target.value}))} placeholder="k.m. dQw4w9WgXcQ" />
+                  <label className="label">YouTube Video ID (optional)</label>
+                  <input className="input" value={f.youtube_video_id} onChange={e=>setF(p=>({...p,youtube_video_id:e.target.value}))} placeholder="e.g. dQw4w9WgXcQ" />
                 </div>
               </div>
               {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={onClose} className="btn-ghost">Ghairi</button>
-                <button type="submit" disabled={!f.name || !f.nearest_university_id} className="btn-primary">Endelea: Mmiliki →</button>
+                <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+                <button type="submit" disabled={!f.name || !f.nearest_university_id} className="btn-primary">Next: Owner →</button>
               </div>
             </form>
           )}
@@ -553,18 +555,18 @@ function AddPropertyModal({ onClose, onSaved }) {
               <div className="flex gap-3 mb-2">
                 <button type="button" onClick={()=>setOwnerMode('search')}
                   className={`flex-1 py-2 text-sm font-semibold rounded-xl border transition-colors ${ownerMode==='search'?'bg-primary text-white border-primary':'bg-white text-slate-600 border-slate-200 hover:border-primary'}`}>
-                  Tafuta Mmiliki Aliyopo
+                  Find Existing Owner
                 </button>
                 <button type="button" onClick={()=>setOwnerMode('create')}
                   className={`flex-1 py-2 text-sm font-semibold rounded-xl border transition-colors ${ownerMode==='create'?'bg-primary text-white border-primary':'bg-white text-slate-600 border-slate-200 hover:border-primary'}`}>
-                  Unda Akaunti Mpya
+                  Create New Account
                 </button>
               </div>
 
               {ownerMode === 'search' && (
                 <div>
-                  <label className="label">Tafuta kwa jina, simu, au barua pepe</label>
-                  <input className="input" value={ownerSearch} onChange={e=>setOwnerSearch(e.target.value)} placeholder="k.m. Amina au +255700..." />
+                  <label className="label">Search by name, phone, or email</label>
+                  <input className="input" value={ownerSearch} onChange={e=>setOwnerSearch(e.target.value)} placeholder="e.g. Amina or +255700..." />
                   {ownerResults.length > 0 && (
                     <div className="mt-2 border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-48 overflow-y-auto">
                       {ownerResults.map(o => (
@@ -589,30 +591,30 @@ function AddPropertyModal({ onClose, onSaved }) {
                       <button type="button" onClick={()=>{setSelOwner(null);setOwnerSearch('');}} className="ml-auto text-slate-400 hover:text-red-500"><X size={14}/></button>
                     </div>
                   )}
-                  <p className="text-xs text-slate-400 mt-2">Ikiwa mmiliki hana akaunti bado, bofya "Unda Akaunti Mpya" au acha wazi — utabadilishwa baadaye.</p>
+                  <p className="text-xs text-slate-400 mt-2">If the owner doesn't have an account yet, click "Create New Account" or leave blank — you can update it later.</p>
                 </div>
               )}
 
               {ownerMode === 'create' && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2">
-                    <label className="label">Jina la Mmiliki *</label>
+                    <label className="label">Owner Name *</label>
                     <input className="input" value={ownerForm.name} onChange={e=>setOwnerForm(p=>({...p,name:e.target.value}))} required />
                   </div>
                   <div>
-                    <label className="label">Barua Pepe *</label>
+                    <label className="label">Email *</label>
                     <input className="input" type="email" value={ownerForm.email} onChange={e=>setOwnerForm(p=>({...p,email:e.target.value}))} required />
                   </div>
                   <div>
-                    <label className="label">Simu *</label>
+                    <label className="label">Phone *</label>
                     <input className="input" value={ownerForm.phone} onChange={e=>setOwnerForm(p=>({...p,phone:e.target.value}))} required />
                   </div>
                   <div>
-                    <label className="label">Jina la Biashara</label>
+                    <label className="label">Business Name</label>
                     <input className="input" value={ownerForm.business_name} onChange={e=>setOwnerForm(p=>({...p,business_name:e.target.value}))} />
                   </div>
                   <div>
-                    <label className="label">Nenosiri la Kwanza *</label>
+                    <label className="label">Initial Password *</label>
                     <input className="input" type="password" value={ownerForm.password} onChange={e=>setOwnerForm(p=>({...p,password:e.target.value}))} required minLength={6} />
                   </div>
                 </div>
@@ -620,8 +622,8 @@ function AddPropertyModal({ onClose, onSaved }) {
 
               {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
               <div className="flex justify-between pt-2">
-                <button type="button" onClick={()=>setStep(1)} className="btn-ghost text-sm"><ArrowLeft size={14}/> Rudi</button>
-                <button type="submit" disabled={saving} className="btn-primary text-sm">{saving?'Inaunda…':'Hifadhi & Endelea →'}</button>
+                <button type="button" onClick={()=>setStep(1)} className="btn-ghost text-sm"><ArrowLeft size={14}/> Back</button>
+                <button type="submit" disabled={saving} className="btn-primary text-sm">{saving?'Saving…':'Save & Continue →'}</button>
               </div>
             </form>
           )}
@@ -635,7 +637,7 @@ function AddPropertyModal({ onClose, onSaved }) {
                     <div key={r.id} className="flex items-center justify-between px-4 py-3 bg-white">
                       <div>
                         <span className="font-semibold text-sm text-slate-800">{r.room_type}</span>
-                        <span className="text-xs text-slate-400 ml-2">· {r.total_count} vyumba · Nafasi {r.capacity}</span>
+                        <span className="text-xs text-slate-400 ml-2">· {r.total_count} rooms · Capacity {r.capacity}</span>
                         <p className="text-xs text-primary font-semibold">TZS {fmt(r.monthly_price)}/mo</p>
                       </div>
                       <button onClick={() => delRoom(r.id)} className="text-red-400 hover:text-red-600 p-1.5"><Trash2 size={14}/></button>
@@ -646,54 +648,54 @@ function AddPropertyModal({ onClose, onSaved }) {
 
               {/* Add room form */}
               <form onSubmit={addRoom} className="bg-slate-50 rounded-2xl p-4 space-y-3">
-                <p className="font-semibold text-sm text-slate-700">Ongeza Aina ya Chumba</p>
+                <p className="font-semibold text-sm text-slate-700">Add Room Type</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="label">Aina ya Chumba</label>
+                    <label className="label">Room Type</label>
                     <select className="input" value={rf.room_type} onChange={e=>setRf(p=>({...p,room_type:e.target.value}))}>
                       {RTYPES.map(t => <option key={t}>{t}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="label">Bei/mwezi (TZS) *</label>
+                    <label className="label">Price/month (TZS) *</label>
                     <input className="input" type="number" value={rf.monthly_price} onChange={e=>setRf(p=>({...p,monthly_price:e.target.value}))} required placeholder="150000" />
                   </div>
                   <div className="col-span-2">
-                    <label className="label">Amana / Maelezo (hiari)</label>
-                    <input className="input" value={rf.deposit_note} onChange={e=>setRf(p=>({...p,deposit_note:e.target.value}))} placeholder="k.m. Miezi 3 ya kodi kabla ya kuingia" />
+                    <label className="label">Deposit / Terms (optional)</label>
+                    <input className="input" value={rf.deposit_note} onChange={e=>setRf(p=>({...p,deposit_note:e.target.value}))} placeholder="e.g. 3 months rent required before moving in" />
                   </div>
                   <div>
-                    <label className="label">Vyumba Vyote (jumla)</label>
+                    <label className="label">Total Rooms</label>
                     <input className="input" type="number" min="1" value={rf.total_count}
                       onChange={e=>setRf(p=>({...p,total_count:e.target.value,available_count:e.target.value}))} />
                   </div>
                   <div>
-                    <label className="label">Vyumba Vilivyobaki (vilivyo huru)</label>
+                    <label className="label">Available (vacant)</label>
                     <input className="input" type="number" min="0" value={rf.available_count}
                       onChange={e=>setRf(p=>({...p,available_count:e.target.value}))} />
                   </div>
                   <div>
-                    <label className="label">Nafasi kwa Chumba</label>
+                    <label className="label">Capacity per Room</label>
                     <input className="input" type="number" min="1" max="10" value={rf.capacity} onChange={e=>setRf(p=>({...p,capacity:e.target.value}))} />
                   </div>
                   <div>
-                    <label className="label">Bafuni</label>
+                    <label className="label">Bathroom</label>
                     <select className="input" value={rf.bathroom_type} onChange={e=>setRf(p=>({...p,bathroom_type:e.target.value}))}>
                       <option>Shared</option><option>Private</option>
                     </select>
                   </div>
                   <label className="col-span-2 flex items-center gap-2 text-sm cursor-pointer">
                     <input type="checkbox" checked={rf.furnished} onChange={e=>setRf(p=>({...p,furnished:e.target.checked}))} className="w-4 h-4 accent-primary" />
-                    Chumba kina fanicha (Furnished)
+                    Furnished
                   </label>
                 </div>
                 {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
-                <button type="submit" disabled={saving} className="btn-primary text-sm">{saving?'Inaongeza…':'+ Ongeza Chumba'}</button>
+                <button type="submit" disabled={saving} className="btn-primary text-sm">{saving?'Adding…':'+ Add Room'}</button>
               </form>
 
               <div className="flex justify-between pt-2">
-                <button onClick={() => setStep(1)} className="btn-ghost text-sm"><ArrowLeft size={14}/> Rudi</button>
-                <button onClick={() => { onSaved(); onClose(); }} className="btn-primary text-sm"><Check size={14}/> Maliza</button>
+                <button onClick={() => setStep(1)} className="btn-ghost text-sm"><ArrowLeft size={14}/> Back</button>
+                <button onClick={() => { onSaved(); onClose(); }} className="btn-primary text-sm"><Check size={14}/> Finish</button>
               </div>
             </div>
           )}
@@ -732,11 +734,11 @@ function RoomRow({ r, fmt, onEdit, onDel, onReload }) {
       <div className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
         <div>
           <span className="font-semibold text-sm text-slate-800">{r.room_type}</span>
-          <span className="text-xs text-slate-400 ml-2">· {r.furnished?'Furnished':'Unfurnished'} · {r.bathroom_type} bath · Nafasi {r.capacity}</span>
+          <span className="text-xs text-slate-400 ml-2">· {r.furnished?'Furnished':'Unfurnished'} · {r.bathroom_type} bath · Capacity {r.capacity}</span>
           <div className="text-xs text-slate-500 mt-0.5">
             <span className="font-semibold text-primary">TZS {fmt(r.monthly_price)}/mo</span>
             {r.deposit_note && <span className="ml-2 text-slate-400">· {r.deposit_note}</span>}
-            <span className="ml-2">· {(r.available??r.available_count??r.total_count)} / {r.total_count} huru</span>
+            <span className="ml-2">· {(r.available??r.available_count??r.total_count)} / {r.total_count} available</span>
             <button onClick={() => setOpen(v=>!v)} className="ml-3 text-accent-600 hover:underline text-[11px]">
               {(r.photos?.length||0)} picha · {(r.videos?.length||0)} video {open?'▲':'▼'}
             </button>
@@ -784,8 +786,8 @@ function RoomRow({ r, fmt, onEdit, onDel, onReload }) {
                 <input className="input text-xs py-1" value={videoId} onChange={e=>setVideoId(e.target.value)} placeholder="dQw4w9WgXcQ" style={{width:'130px'}}/>
               </div>
               <div>
-                <label className="label text-[10px]">Kichwa (hiari)</label>
-                <input className="input text-xs py-1" value={videoTitle} onChange={e=>setVideoTitle(e.target.value)} placeholder="Tour ya chumba" style={{width:'140px'}}/>
+                <label className="label text-[10px]">Title (optional)</label>
+                <input className="input text-xs py-1" value={videoTitle} onChange={e=>setVideoTitle(e.target.value)} placeholder="Room tour" style={{width:'140px'}}/>
               </div>
               <button onClick={addVideo} disabled={!videoId.trim()} className="btn-sm bg-accent text-white text-xs mb-0.5">+ Video</button>
             </div>
@@ -841,7 +843,7 @@ function PropertyDetail() {
       }
       setAddRoom(false); setEditRoom(null);
       load();
-    } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+    } catch (e) { setErr(e.response?.data?.message || 'An error occurred.'); }
     finally { setSaving(false); }
   };
 
@@ -855,13 +857,13 @@ function PropertyDetail() {
   };
 
   const delRoom = async (rid) => {
-    if (!confirm('Futa aina hii ya chumba?')) return;
+    if (!confirm('Delete this room type?')) return;
     await api.delete(`/admin/rooms/${rid}`);
     load();
   };
 
   if (loading) return <Spinner />;
-  if (!prop) return <EmptyState label="Mali haikupatikana." />;
+  if (!prop) return <EmptyState label="Property not found." />;
 
   return (
     <div className="p-5 lg:p-8 space-y-6">
@@ -869,45 +871,45 @@ function PropertyDetail() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <button onClick={() => navigate('/admin/properties')} className="flex items-center gap-1 text-xs text-slate-500 hover:text-primary mb-2">
-            <ArrowLeft size={13}/> Rudi kwenye orodha
+            <ArrowLeft size={13}/> Back to list
           </button>
           <h2 className="font-display font-bold text-xl text-slate-900">{prop.name}</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{prop.area} · {prop.university_name} · Kanda {prop.zone_code||'—'}</p>
+          <p className="text-sm text-slate-500 mt-0.5">{prop.area} · {prop.university_name} · Zone {prop.zone_code||'—'}</p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
           <StatusBadge status={prop.status} />
           {prop.verified
-            ? <button onClick={async()=>{if(!confirm('Ondoa badge ya "Geto Verified"?'))return;await api.put(`/admin/properties/${propId}/unverify`);load();}}
-                className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Ondoa Uthibitisho</button>
-            : prop.status==='approved' && <button onClick={async()=>{if(!confirm('Thibitisha mali hii?'))return;await api.put(`/admin/properties/${propId}/verify`,{checklist:{owner_identity:1,location_confirmed:1,rooms_confirmed:1,water_confirmed:1,electricity_confirmed:1,security_confirmed:1,price_confirmed:1}});load();}}
-                className="btn-sm bg-primary text-white hover:bg-primary/80"><Shield size={13}/>Thibitisha</button>
+            ? <button onClick={async()=>{if(!confirm('Remove the "Geto Verified" badge?'))return;await api.put(`/admin/properties/${propId}/unverify`);load();}}
+                className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Remove Verification</button>
+            : prop.status==='approved' && <button onClick={async()=>{if(!confirm('Verify this property?'))return;await api.put(`/admin/properties/${propId}/verify`,{checklist:{owner_identity:1,location_confirmed:1,rooms_confirmed:1,water_confirmed:1,electricity_confirmed:1,security_confirmed:1,price_confirmed:1}});load();}}
+                className="btn-sm bg-primary text-white hover:bg-primary/80"><Shield size={13}/>Verify</button>
           }
-          <button onClick={async()=>{if(!confirm('Futa mali hii kabisa? Hatua hii haiwezi kurudishwa.'))return;setDeleting(true);try{await api.delete(`/admin/properties/${propId}`);navigate('/admin/properties');}catch{setDeleting(false);}}}
+          <button onClick={async()=>{if(!confirm('Permanently delete this property? This cannot be undone.'))return;setDeleting(true);try{await api.delete(`/admin/properties/${propId}`);navigate('/admin/properties');}catch{setDeleting(false);}}}
             disabled={deleting}
-            className="btn-sm bg-red-600 text-white hover:bg-red-700"><Trash2 size={13}/>{deleting?'…':'Futa Mali'}</button>
+            className="btn-sm bg-red-600 text-white hover:bg-red-700"><Trash2 size={13}/>{deleting?'…':'Delete Property'}</button>
         </div>
       </div>
 
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-2">
-          <h4 className="font-semibold text-slate-800 text-sm mb-3">Maelezo ya Mali</h4>
+          <h4 className="font-semibold text-slate-800 text-sm mb-3">Property Details</h4>
           <div className="text-xs space-y-1.5 text-slate-600">
-            <div><span className="text-slate-400">Aina:</span> {prop.property_type}</div>
-            <div><span className="text-slate-400">Anwani:</span> {prop.address||'—'}</div>
+            <div><span className="text-slate-400">Type:</span> {prop.property_type}</div>
+            <div><span className="text-slate-400">Address:</span> {prop.address||'—'}</div>
             {prop.highlight && <div><span className="text-slate-400">Highlight:</span> <em>{prop.highlight}</em></div>}
-            <div><span className="text-slate-400">Chuo:</span> {prop.university_name}</div>
-            <div><span className="text-slate-400">Kanda:</span> {prop.zone_code} — {prop.zone_name}</div>
+            <div><span className="text-slate-400">University:</span> {prop.university_name}</div>
+            <div><span className="text-slate-400">Zone:</span> {prop.zone_code} — {prop.zone_name}</div>
           </div>
           {prop.description && <p className="text-xs text-slate-500 pt-2 border-t border-slate-100">{prop.description}</p>}
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-2">
-          <h4 className="font-semibold text-slate-800 text-sm mb-3">Mmiliki / Msimamizi</h4>
+          <h4 className="font-semibold text-slate-800 text-sm mb-3">Owner / Manager</h4>
           <div className="text-xs space-y-1.5 text-slate-600">
-            <div><span className="text-slate-400">Mmiliki:</span> {prop.owner_name || '—'}</div>
-            <div><span className="text-slate-400">Simu:</span> {prop.owner_phone || '—'}</div>
-            <div><span className="text-slate-400">Barua pepe:</span> {prop.owner_email || '—'}</div>
-            {prop.manager && <div><span className="text-slate-400">Msimamizi:</span> {prop.manager.name} · {prop.manager.phone}</div>}
+            <div><span className="text-slate-400">Owner:</span> {prop.owner_name || '—'}</div>
+            <div><span className="text-slate-400">Phone:</span> {prop.owner_phone || '—'}</div>
+            <div><span className="text-slate-400">Email:</span> {prop.owner_email || '—'}</div>
+            {prop.manager && <div><span className="text-slate-400">Manager:</span> {prop.manager.name} · {prop.manager.phone}</div>}
           </div>
         </div>
       </div>
@@ -915,46 +917,46 @@ function PropertyDetail() {
       {/* Rooms */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="font-semibold text-slate-800 text-sm">Aina za Vyumba ({prop.rooms?.length || 0})</h4>
+          <h4 className="font-semibold text-slate-800 text-sm">Room Types ({prop.rooms?.length || 0})</h4>
           <button onClick={() => { setEditRoom(null); setRf({ room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared' }); setAddRoom(v=>!v); }}
-            className="btn-sm bg-primary text-white hover:bg-primary/90"><Plus size={13}/>Ongeza Chumba</button>
+            className="btn-sm bg-primary text-white hover:bg-primary/90"><Plus size={13}/>Add Room</button>
         </div>
 
         {/* Add/Edit room form */}
         {addRoomOpen && (
           <form onSubmit={saveRoom} className="bg-slate-50 rounded-xl p-4 mb-4 space-y-3">
-            <p className="font-semibold text-sm text-slate-700">{editRoom ? 'Hariri Chumba' : 'Chumba Kipya'}</p>
+            <p className="font-semibold text-sm text-slate-700">{editRoom ? 'Edit Room' : 'New Room'}</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div>
-                <label className="label">Aina</label>
+                <label className="label">Type</label>
                 <select className="input" value={rf.room_type} onChange={e=>setRf(p=>({...p,room_type:e.target.value}))}>
                   {RTYPES.map(t=><option key={t}>{t}</option>)}
                 </select>
               </div>
               <div>
-                <label className="label">Bei/mwezi (TZS)</label>
+                <label className="label">Price/month (TZS)</label>
                 <input className="input" type="number" value={rf.monthly_price} onChange={e=>setRf(p=>({...p,monthly_price:e.target.value}))} required />
               </div>
               <div className="col-span-2 sm:col-span-3">
-                <label className="label">Amana / Maelezo (hiari)</label>
-                <input className="input" value={rf.deposit_note} onChange={e=>setRf(p=>({...p,deposit_note:e.target.value}))} placeholder="k.m. Miezi 3 ya kodi kabla ya kuingia" />
+                <label className="label">Deposit / Terms (optional)</label>
+                <input className="input" value={rf.deposit_note} onChange={e=>setRf(p=>({...p,deposit_note:e.target.value}))} placeholder="e.g. 3 months rent before moving in" />
               </div>
               <div>
-                <label className="label">Vyumba Vyote</label>
+                <label className="label">Total Rooms</label>
                 <input className="input" type="number" min="1" value={rf.total_count}
                   onChange={e=>setRf(p=>({...p,total_count:e.target.value, available_count: e.target.value}))} />
               </div>
               <div>
-                <label className="label">Vilivyobaki (huru)</label>
+                <label className="label">Available (vacant)</label>
                 <input className="input" type="number" min="0" value={rf.available_count}
                   onChange={e=>setRf(p=>({...p,available_count:e.target.value}))} />
               </div>
               <div>
-                <label className="label">Nafasi/Chumba</label>
+                <label className="label">Capacity/Room</label>
                 <input className="input" type="number" min="1" value={rf.capacity} onChange={e=>setRf(p=>({...p,capacity:e.target.value}))} />
               </div>
               <div>
-                <label className="label">Bafuni</label>
+                <label className="label">Bathroom</label>
                 <select className="input" value={rf.bathroom_type} onChange={e=>setRf(p=>({...p,bathroom_type:e.target.value}))}>
                   <option>Shared</option><option>Private</option>
                 </select>
@@ -966,15 +968,15 @@ function PropertyDetail() {
             </label>
             {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
             <div className="flex gap-2">
-              <button type="submit" disabled={saving} className="btn-sm bg-primary text-white"><Save size={13}/>{saving?'…':'Hifadhi'}</button>
-              <button type="button" onClick={() => { setAddRoom(false); setEditRoom(null); }} className="btn-sm border border-slate-200 text-slate-600">Ghairi</button>
+              <button type="submit" disabled={saving} className="btn-sm bg-primary text-white"><Save size={13}/>{saving?'…':'Save'}</button>
+              <button type="button" onClick={() => { setAddRoom(false); setEditRoom(null); }} className="btn-sm border border-slate-200 text-slate-600">Cancel</button>
             </div>
           </form>
         )}
 
         <div className="border border-slate-200 rounded-xl overflow-hidden">
           {(!prop.rooms || prop.rooms.length === 0) && (
-            <div className="px-4 py-6 text-center text-slate-400 text-sm">Hakuna vyumba bado. Ongeza aina ya chumba.</div>
+            <div className="px-4 py-6 text-center text-slate-400 text-sm">No rooms yet. Add a room type above.</div>
           )}
           {prop.rooms?.map(r => (
             <RoomRow key={r.id} r={r} fmt={fmt} onEdit={startEdit} onDel={delRoom} onReload={load} />
@@ -985,11 +987,11 @@ function PropertyDetail() {
       {/* Tenants */}
       {prop.tenants?.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <h4 className="font-semibold text-slate-800 text-sm mb-4">Wapangaji ({prop.tenants.length})</h4>
+          <h4 className="font-semibold text-slate-800 text-sm mb-4">Tenants ({prop.tenants.length})</h4>
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead><tr className="border-b border-slate-100">
-                {['Jina','Simu','Chumba','Kodi/mwezi','Tarehe ya Mwisho','Hali'].map(h=>(
+                {['Name','Phone','Room','Rent/mo','Lease End','Status'].map(h=>(
                   <th key={h} className="py-2 pr-4 text-left text-slate-500 font-semibold">{h}</th>
                 ))}
               </tr></thead>
@@ -1032,7 +1034,7 @@ function UsersList() {
     load();
   };
   const suspend = async (id) => {
-    if (!confirm('Simamisha akaunti hii?')) return;
+    if (!confirm('Suspend this account?')) return;
     await api.put(`/admin/users/${id}/suspend`);
     load();
   };
@@ -1043,7 +1045,7 @@ function UsersList() {
         {['student','property_owner','property_manager','zone_manager'].map(r => (
           <button key={r} onClick={() => setRole(r)}
             className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${role===r?'bg-primary text-white':'bg-white border border-slate-200 text-slate-600 hover:border-primary'}`}>
-            {r==='student'?'Wanafunzi':r==='property_owner'?'Wamiliki':r==='property_manager'?'Wasimamizi':r==='zone_manager'?'Wasimamizi wa Kanda':'Wote'}
+            {r==='student'?'Students':r==='property_owner'?'Owners':r==='property_manager'?'Managers':r==='zone_manager'?'Zone Managers':'All'}
           </button>
         ))}
       </div>
@@ -1051,31 +1053,31 @@ function UsersList() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>{['Jina','Barua Pepe','Simu','Hali','Mali','Kitendo'].map(h=>(
+              <tr>{['Name','Email','Phone','Status','Properties','Action'].map(h=>(
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {users.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Hakuna watumiaji</td></tr>}
+              {users.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No users found</td></tr>}
               {users.map(u => (
                 <tr key={u.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{u.name}</td>
                   <td className="px-4 py-3 text-slate-500">{u.email}</td>
                   <td className="px-4 py-3 text-slate-500">{u.phone}</td>
                   <td className="px-4 py-3">
-                    {u.status === 'active' && u.verified ? <span className="badge-green">Imethibitishwa</span>
-                     : u.status === 'pending_verification' ? <span className="badge-amber">Inasubiri</span>
-                     : u.status === 'suspended' ? <span className="badge-red">Imesimamishwa</span>
-                     : <span className="badge-gray">Hai</span>}
+                    {u.status === 'active' && u.verified ? <span className="badge-green">Verified</span>
+                     : u.status === 'pending_verification' ? <span className="badge-amber">Pending</span>
+                     : u.status === 'suspended' ? <span className="badge-red">Suspended</span>
+                     : <span className="badge-gray">Active</span>}
                   </td>
                   <td className="px-4 py-3 text-slate-500">{u.property_count || 0}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
                       {u.status === 'pending_verification' && (
-                        <button onClick={() => verify(u.id)} className="btn-sm bg-green-600 text-white hover:bg-green-700 text-xs"><Check size={12}/>Thibitisha</button>
+                        <button onClick={() => verify(u.id)} className="btn-sm bg-green-600 text-white hover:bg-green-700 text-xs"><Check size={12}/>Verify</button>
                       )}
                       {u.status === 'active' && (
-                        <button onClick={() => suspend(u.id)} className="btn-sm border border-red-200 text-red-600 hover:bg-red-50 text-xs">Simamisha</button>
+                        <button onClick={() => suspend(u.id)} className="btn-sm border border-red-200 text-red-600 hover:bg-red-50 text-xs">Suspend</button>
                       )}
                     </div>
                   </td>
@@ -1102,12 +1104,12 @@ function BookingsList() {
       <div className="overflow-x-auto rounded-2xl border border-slate-200">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>{['Mwanafunzi','Mali','Aina ya Chumba','Bei','Tarehe ya Kuhamia','Hali','Kanda'].map(h=>(
+            <tr>{['Student','Property','Room Type','Price','Move-in Date','Status','Zone'].map(h=>(
               <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
             ))}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {bookings.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-slate-400">Hakuna uhifadhi</td></tr>}
+            {bookings.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-slate-400">No bookings found</td></tr>}
             {bookings.map(b => (
               <tr key={b.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3 font-medium">{b.student_name}<div className="text-xs text-slate-400">{b.student_phone}</div></td>
@@ -1149,7 +1151,7 @@ function ZonesView() {
       setZoneForm({ code:'', name:'', city:'', description:'' });
       setShowForm(false);
       load();
-    } catch(e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+    } catch(e) { setErr(e.response?.data?.message || 'An error occurred.'); }
     finally { setSaving(false); }
   };
 
@@ -1165,7 +1167,7 @@ function ZonesView() {
       await api.post(`/admin/zones/${zoneId}/clusters`, f);
       setClusterForms(p => ({ ...p, [zoneId]: { code:'', name:'' } }));
       load();
-    } catch(e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+    } catch(e) { setErr(e.response?.data?.message || 'An error occurred.'); }
   };
 
   // Group zones by city
@@ -1181,50 +1183,50 @@ function ZonesView() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="font-display font-bold text-xl text-slate-900">Kanda &amp; Maeneo</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{zones.length} kanda · Tanzania nzima</p>
+          <h2 className="font-display font-bold text-xl text-slate-900">Zones &amp; Areas</h2>
+          <p className="text-sm text-slate-500 mt-0.5">{zones.length} zones · Nationwide</p>
         </div>
         <button onClick={() => { setShowForm(v=>!v); setErr(''); }}
           className="btn-primary text-sm gap-2">
-          <Plus size={15}/> Unda Kanda Mpya
+          <Plus size={15}/> Create Zone
         </button>
       </div>
 
       {/* Create zone form */}
       {showForm && (
         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-5">
-          <h3 className="font-display font-bold text-slate-900 mb-4">Kanda Mpya</h3>
+          <h3 className="font-display font-bold text-slate-900 mb-4">New Zone</h3>
           <form onSubmit={createZone} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="label">Msimbo wa Kanda (k.m. AA, DOD)</label>
+              <label className="label">Zone Code (e.g. AA, DOD)</label>
               <input className="input" value={zoneForm.code} required maxLength={5}
                 onChange={e => setZoneForm(p=>({...p, code:e.target.value.toUpperCase()}))}
-                placeholder="k.m. AA" />
+                placeholder="e.g. AA" />
             </div>
             <div>
-              <label className="label">Jina la Kanda</label>
+              <label className="label">Zone Name</label>
               <input className="input" value={zoneForm.name} required
                 onChange={e => setZoneForm(p=>({...p, name:e.target.value}))}
-                placeholder="k.m. NM-AIST / ATC / Njiro" />
+                placeholder="e.g. NM-AIST / ATC / Njiro" />
             </div>
             <div>
-              <label className="label">Mji / Mkoa</label>
+              <label className="label">City / Region</label>
               <input className="input" value={zoneForm.city} required
                 onChange={e => setZoneForm(p=>({...p, city:e.target.value}))}
-                placeholder="k.m. Arusha" />
+                placeholder="e.g. Arusha" />
             </div>
             <div>
-              <label className="label">Maelezo (hiari)</label>
+              <label className="label">Description (optional)</label>
               <input className="input" value={zoneForm.description}
                 onChange={e => setZoneForm(p=>({...p, description:e.target.value}))}
-                placeholder="Maelezo mafupi ya kanda" />
+                placeholder="Brief zone description" />
             </div>
             {err && <div className="sm:col-span-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{err}</div>}
             <div className="sm:col-span-2 flex gap-3">
               <button type="submit" disabled={saving} className="btn-primary text-sm">
-                {saving ? <Loader2 size={14} className="animate-spin"/> : <Plus size={14}/>} Unda Kanda
+                {saving ? <Loader2 size={14} className="animate-spin"/> : <Plus size={14}/>} Create Zone
               </button>
-              <button type="button" onClick={()=>setShowForm(false)} className="btn-ghost text-sm">Ghairi</button>
+              <button type="button" onClick={()=>setShowForm(false)} className="btn-ghost text-sm">Cancel</button>
             </div>
           </form>
         </div>
@@ -1236,7 +1238,7 @@ function ZonesView() {
           <div className="flex items-center gap-2 mb-3">
             <Globe size={15} className="text-accent-600"/>
             <h3 className="font-display font-bold text-slate-700">{city}</h3>
-            <span className="text-xs text-slate-400">({cityZones.length} kanda)</span>
+            <span className="text-xs text-slate-400">({cityZones.length} zones)</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {cityZones.map(z => {
@@ -1255,20 +1257,20 @@ function ZonesView() {
                         <div className="text-xs text-slate-400">{z.city}</div>
                       </div>
                       <button onClick={() => toggleActive(z)}
-                        title={z.active ? 'Ficha kanda' : 'Asha kanda'}
+                        title={z.active ? 'Deactivate zone' : 'Activate zone'}
                         className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs transition-colors ${z.active ? 'bg-green-50 text-green-600 hover:bg-red-50 hover:text-red-500' : 'bg-slate-100 text-slate-400 hover:bg-green-50 hover:text-green-600'}`}>
                         {z.active ? <Check size={13}/> : <XCircle size={13}/>}
                       </button>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-xs text-slate-500 mb-3">
-                      <div className="text-center"><div className="font-bold text-slate-800 text-base">{z.total_properties||0}</div>Mali</div>
-                      <div className="text-center"><div className="font-bold text-primary text-base">{z.total_rooms||0}</div>Vyumba</div>
-                      <div className="text-center"><div className="font-bold text-accent-600 text-base">{z.managers||0}</div>Wasimamizi</div>
+                      <div className="text-center"><div className="font-bold text-slate-800 text-base">{z.total_properties||0}</div>Properties</div>
+                      <div className="text-center"><div className="font-bold text-primary text-base">{z.total_rooms||0}</div>Rooms</div>
+                      <div className="text-center"><div className="font-bold text-accent-600 text-base">{z.managers||0}</div>Managers</div>
                     </div>
                     {/* Toggle clusters */}
                     <button onClick={() => setExpanded(p=>({...p,[z.id]:!p[z.id]}))}
                       className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-700 transition-colors">
-                      <span>{(z.clusters||[]).length} Maeneo ya Kanda</span>
+                      <span>{(z.clusters||[]).length} Sub-areas</span>
                       <Chevron size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}/>
                     </button>
                   </div>
@@ -1280,17 +1282,17 @@ function ZonesView() {
                         <div key={c.id} className="flex items-center justify-between text-xs">
                           <span className="font-mono text-primary font-bold w-12">{c.code}</span>
                           <span className="flex-1 text-slate-700">{c.name}</span>
-                          {!c.active && <span className="text-slate-400 text-[10px]">Imefungwa</span>}
+                          {!c.active && <span className="text-slate-400 text-[10px]">Inactive</span>}
                         </div>
                       ))}
                       {/* Add cluster form */}
                       <form onSubmit={e => addCluster(z.id, e)} className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
                         <input className="input text-xs py-1.5 w-20 font-mono" value={cf.code} maxLength={6}
                           onChange={e => setClusterForms(p=>({...p,[z.id]:{...cf,code:e.target.value.toUpperCase()}}))}
-                          placeholder="Msimbo" required/>
+                          placeholder="Code" required/>
                         <input className="input text-xs py-1.5 flex-1" value={cf.name}
                           onChange={e => setClusterForms(p=>({...p,[z.id]:{...cf,name:e.target.value}}))}
-                          placeholder="Jina la eneo" required/>
+                          placeholder="Area name" required/>
                         <button type="submit" className="btn-sm bg-primary text-white hover:bg-primary-600 shrink-0">
                           <Plus size={12}/>
                         </button>
@@ -1350,12 +1352,12 @@ function UniversitiesView() {
       if (editing === 'new') { await api.post('/universities', f); }
       else { await api.put(`/universities/${editing.id}`, f); }
       setEditing(null); load();
-    } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+    } catch (e) { setErr(e.response?.data?.message || 'An error occurred.'); }
     finally { setSaving(false); }
   };
 
   const deactivate = async (id) => {
-    if (!confirm('Futa chuo hiki? Itaficha kutoka kwenye orodha.')) return;
+    if (!confirm('Delete this university? It will be hidden from the list.')) return;
     await api.delete(`/universities/${id}`);
     load();
   };
@@ -1369,49 +1371,49 @@ function UniversitiesView() {
   return (
     <div className="p-5 lg:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <input className="input max-w-xs" placeholder="Tafuta chuo…" value={search} onChange={e=>setSearch(e.target.value)} />
-        <button onClick={startNew} className="btn-primary text-sm shrink-0"><Plus size={15}/>Ongeza Chuo</button>
+        <input className="input max-w-xs" placeholder="Search university…" value={search} onChange={e=>setSearch(e.target.value)} />
+        <button onClick={startNew} className="btn-primary text-sm shrink-0"><Plus size={15}/>Add University</button>
       </div>
 
       {/* Edit / Add form */}
       {editing && (
         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 mb-5">
-          <h4 className="font-semibold text-slate-800 mb-4">{editing==='new'?'Chuo/Taasisi Kipya':'Hariri Chuo'}</h4>
+          <h4 className="font-semibold text-slate-800 mb-4">{editing==='new'?'New University / Institution':'Edit University'}</h4>
           <form onSubmit={save} className="grid grid-cols-2 gap-3">
             <div className="col-span-2 sm:col-span-1">
-              <label className="label">Jina Kamili *</label>
+              <label className="label">Full Name *</label>
               <input className="input" value={f.name} onChange={e=>setF(p=>({...p,name:e.target.value}))} required />
             </div>
             <div>
-              <label className="label">Kifupi (k.m. UDSM)</label>
+              <label className="label">Short Name (e.g. UDSM)</label>
               <input className="input" value={f.short_name} onChange={e=>setF(p=>({...p,short_name:e.target.value}))} placeholder="UDSM" />
             </div>
             <div>
-              <label className="label">Eneo</label>
-              <input className="input" value={f.area} onChange={e=>setF(p=>({...p,area:e.target.value}))} placeholder="k.m. Ubungo" />
+              <label className="label">Area</label>
+              <input className="input" value={f.area} onChange={e=>setF(p=>({...p,area:e.target.value}))} placeholder="e.g. Ubungo" />
             </div>
             <div>
-              <label className="label">Wilaya</label>
-              <input className="input" value={f.district} onChange={e=>setF(p=>({...p,district:e.target.value}))} placeholder="k.m. Kinondoni" />
+              <label className="label">District</label>
+              <input className="input" value={f.district} onChange={e=>setF(p=>({...p,district:e.target.value}))} placeholder="e.g. Kinondoni" />
             </div>
             <div>
-              <label className="label">Kanda</label>
+              <label className="label">Zone</label>
               <select className="input" value={f.zone_id} onChange={e=>onZoneChange(e.target.value)}>
-                <option value="">Chagua kanda…</option>
+                <option value="">Select zone…</option>
                 {zones.map(z=><option key={z.id} value={z.id}>{z.code} — {z.name}</option>)}
               </select>
             </div>
             <div>
               <label className="label">Cluster</label>
               <select className="input" value={f.cluster_id} onChange={e=>setF(p=>({...p,cluster_id:e.target.value}))}>
-                <option value="">Chagua cluster…</option>
+                <option value="">Select cluster…</option>
                 {clusters.map(c=><option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
               </select>
             </div>
             {err && <div className="col-span-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
             <div className="col-span-2 flex gap-2">
-              <button type="submit" disabled={saving} className="btn-primary text-sm"><Save size={13}/>{saving?'…':'Hifadhi'}</button>
-              <button type="button" onClick={()=>setEditing(null)} className="btn-ghost text-sm">Ghairi</button>
+              <button type="submit" disabled={saving} className="btn-primary text-sm"><Save size={13}/>{saving?'…':'Save'}</button>
+              <button type="button" onClick={()=>setEditing(null)} className="btn-ghost text-sm">Cancel</button>
             </div>
           </form>
         </div>
@@ -1421,12 +1423,12 @@ function UniversitiesView() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>{['Jina','Kifupi','Eneo','Kanda','Mali','Vitendo'].map(h=>(
+              <tr>{['Name','Short','Area','Zone','Properties','Actions'].map(h=>(
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.length===0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Hakuna vyuo vinavyolingana.</td></tr>}
+              {filtered.length===0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No universities found.</td></tr>}
               {filtered.map(u => (
                 <tr key={u.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{u.name}</td>
@@ -1436,8 +1438,8 @@ function UniversitiesView() {
                   <td className="px-4 py-3">{u.property_count||0}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
-                      <button onClick={()=>startEdit(u)} className="btn-sm border border-slate-200 text-slate-600 hover:border-primary hover:text-primary"><Pencil size={12}/>Hariri</button>
-                      <button onClick={()=>deactivate(u.id)} className="btn-sm border border-red-100 text-red-500 hover:bg-red-50"><Trash2 size={12}/>Futa</button>
+                      <button onClick={()=>startEdit(u)} className="btn-sm border border-slate-200 text-slate-600 hover:border-primary hover:text-primary"><Pencil size={12}/>Edit</button>
+                      <button onClick={()=>deactivate(u.id)} className="btn-sm border border-red-100 text-red-500 hover:bg-red-50"><Trash2 size={12}/>Delete</button>
                     </div>
                   </td>
                 </tr>
@@ -1474,7 +1476,7 @@ function StaffView() {
       const r = await api.get('/admin/zone-managers');
       setStaff(r.data);
       setForm({ name:'', email:'', phone:'', password:'', zone_id:'' });
-    } catch (e) { setErr(e.response?.data?.message || 'Hitilafu.'); }
+    } catch (e) { setErr(e.response?.data?.message || 'An error occurred.'); }
     finally { setSub(false); }
   };
 
@@ -1483,35 +1485,35 @@ function StaffView() {
     <div className="p-5 lg:p-8 space-y-8">
       {/* Create form */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 max-w-lg">
-        <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2"><UserPlus size={16}/>Ongeza Msimamizi wa Kanda</h3>
+        <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2"><UserPlus size={16}/>Add Zone Manager</h3>
         <form onSubmit={create} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="label">Jina</label><input className="input" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} required /></div>
-            <div><label className="label">Barua Pepe</label><input className="input" type="email" value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))} required /></div>
-            <div><label className="label">Simu</label><input className="input" value={form.phone} onChange={e=>setForm(p=>({...p,phone:e.target.value}))} required /></div>
-            <div><label className="label">Nenosiri</label><input className="input" type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} required /></div>
+            <div><label className="label">Name</label><input className="input" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} required /></div>
+            <div><label className="label">Email</label><input className="input" type="email" value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))} required /></div>
+            <div><label className="label">Phone</label><input className="input" value={form.phone} onChange={e=>setForm(p=>({...p,phone:e.target.value}))} required /></div>
+            <div><label className="label">Password</label><input className="input" type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} required /></div>
           </div>
           <div>
-            <label className="label">Kanda</label>
+            <label className="label">Zone</label>
             <select className="input" value={form.zone_id} onChange={e=>setForm(p=>({...p,zone_id:e.target.value}))} required>
-              <option value="">Chagua kanda…</option>
+              <option value="">Select zone…</option>
               {zones.map(z => <option key={z.id} value={z.id}>{z.code} — {z.name}</option>)}
             </select>
           </div>
           {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
-          <button type="submit" disabled={submitting} className="btn-primary">{submitting?'Inaunda…':'Unda Akaunti'}</button>
+          <button type="submit" disabled={submitting} className="btn-primary">{submitting?'Creating…':'Create Account'}</button>
         </form>
       </div>
       {/* Staff list */}
       <div className="overflow-x-auto rounded-2xl border border-slate-200">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>{['Jina','Barua Pepe','Simu','Kanda','Mali katika Kanda','Mara ya Mwisho Kuingia'].map(h=>(
+            <tr>{['Name','Email','Phone','Zone','Properties in Zone','Last Login'].map(h=>(
               <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
             ))}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {staff.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Hakuna wasimamizi</td></tr>}
+            {staff.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No zone managers</td></tr>}
             {staff.map(s => (
               <tr key={s.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3 font-medium">{s.name}</td>
@@ -1519,7 +1521,7 @@ function StaffView() {
                 <td className="px-4 py-3 text-slate-500">{s.phone}</td>
                 <td className="px-4 py-3"><span className="font-bold text-primary">{s.zone_code}</span> {s.zone_name}</td>
                 <td className="px-4 py-3">{s.zone_properties||0}</td>
-                <td className="px-4 py-3 text-slate-400 text-xs">{s.last_login_at ? new Date(s.last_login_at).toLocaleDateString() : 'Haijaingia'}</td>
+                <td className="px-4 py-3 text-slate-400 text-xs">{s.last_login_at ? new Date(s.last_login_at).toLocaleDateString() : 'Never'}</td>
               </tr>
             ))}
           </tbody>
@@ -1561,10 +1563,10 @@ function TypesView() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {/* Property Types */}
         <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <h3 className="font-display font-bold text-slate-900 mb-4">Aina za Mali</h3>
+          <h3 className="font-display font-bold text-slate-900 mb-4">Property Types</h3>
           <div className="flex gap-2 mb-4">
             <input className="input flex-1 text-sm" value={newPType} onChange={e=>setNewPType(e.target.value)}
-              placeholder="Ongeza aina mpya…" onKeyDown={e=>e.key==='Enter'&&addPType()} />
+              placeholder="Add new type…" onKeyDown={e=>e.key==='Enter'&&addPType()} />
             <button onClick={addPType} className="btn-sm bg-primary text-white"><Plus size={14}/></button>
           </div>
           <div className="space-y-1">
@@ -1578,10 +1580,10 @@ function TypesView() {
         </div>
         {/* Room Types */}
         <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <h3 className="font-display font-bold text-slate-900 mb-4">Aina za Vyumba</h3>
+          <h3 className="font-display font-bold text-slate-900 mb-4">Room Types</h3>
           <div className="flex gap-2 mb-4">
             <input className="input flex-1 text-sm" value={newRType} onChange={e=>setNewRType(e.target.value)}
-              placeholder="Ongeza aina mpya…" onKeyDown={e=>e.key==='Enter'&&addRType()} />
+              placeholder="Add new type…" onKeyDown={e=>e.key==='Enter'&&addRType()} />
             <button onClick={addRType} className="btn-sm bg-primary text-white"><Plus size={14}/></button>
           </div>
           <div className="space-y-1">
@@ -1612,9 +1614,9 @@ function StatusBadge({ status }) {
     payment_pending: 'badge-amber', move_in_completed: 'badge-green',
   };
   const labels = {
-    pending:'Inasubiri', approved:'Imeidhinishwa', rejected:'Imekataliwa',
-    confirmed:'Imethibitishwa', cancelled:'Imefutwa', accepted:'Imekubaliwa',
-    payment_pending:'Malipo', move_in_completed:'Ameingia',
+    pending:'Pending', approved:'Approved', rejected:'Rejected',
+    confirmed:'Confirmed', cancelled:'Cancelled', accepted:'Accepted',
+    payment_pending:'Payment Pending', move_in_completed:'Moved In',
   };
   return <span className={`badge ${map[status]||'badge-gray'}`}>{labels[status]||status}</span>;
 }

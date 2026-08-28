@@ -45,6 +45,9 @@ export default function ViewingModal({ property, onClose }) {
           </div>
         ) : (
           <div className="p-6 space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+              <span className="font-bold">Viewing Fee: TZS 20,000</span> — A Geto admin will physically accompany you to visit the property. Fee is payable on the day of the visit.
+            </div>
             <div>
               <label className="label">Preferred Date</label>
               <input type="date" value={date} onChange={e => setDate(e.target.value)}
