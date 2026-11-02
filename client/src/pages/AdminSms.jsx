@@ -11,6 +11,17 @@ function statusInfo(status = '') {
 }
 const KIND = { pw: 'Password reset', welcome: 'Login details', test: 'Test', daily: 'Daily summary', reminder: 'Rent reminder', booking: 'Booking' };
 
+// What a Next SMS refusal means and what to do about it
+function explain(status = '') {
+  const s = status.toUpperCase();
+  if (s.includes('REJECTED_SOURCE')) return "The sender name (SMS_SENDER in _config.php) isn't registered on your Next SMS account. Register it in the Next SMS dashboard under Sender IDs, or set SMS_SENDER to a name that is already approved.";
+  if (s.includes('CREDIT') || s.includes('BALANCE')) return 'Not enough SMS credit. Top up in the Next SMS dashboard.';
+  if (s.includes('DESTINATION')) return 'The phone number was not accepted. Check the number.';
+  if (s.startsWith('HTTP_401') || s.startsWith('HTTP_403')) return 'The SMS key (SMS_TOKEN in _config.php) was refused. Copy a fresh API token from the Next SMS dashboard.';
+  if (s.startsWith('NETWORK_ERROR')) return 'The server could not reach Next SMS. Try again in a few minutes.';
+  return 'Check the SMS token, sender name and balance in the Next SMS dashboard.';
+}
+
 export default function AdminSms() {
   const [log, setLog]         = useState(null);
   const [loading, setLoading] = useState(true);
@@ -35,7 +46,7 @@ export default function AdminSms() {
       const { data } = await api.post('/admin/sms-test', { phone });
       setResult(data.sent
         ? { ok: true, text: `Sent to ${data.to}. It should arrive within a minute. Status: ${statusInfo(data.status).label}.` }
-        : { ok: false, text: `Not sent. The SMS company replied: ${data.status || 'no answer'}. Check the SMS token and balance in _config.php and the Next SMS dashboard.` });
+        : { ok: false, text: `Not sent. The SMS company replied: ${data.status || 'no answer'}. ${explain(data.status || '')}` });
       load();
     } catch (err) {
       setResult({ ok: false, text: err.response?.data?.message || 'Could not send the test SMS.' });
@@ -58,6 +69,12 @@ export default function AdminSms() {
       {log && !log.configured && (
         <div role="alert" className="flex gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           <AlertTriangle size={18} className="shrink-0" />SMS is not set up: SMS_TOKEN is empty in the server's _config.php.
+        </div>
+      )}
+      {log?.recent?.[0] && statusInfo(log.recent[0].status).label === 'Failed' && (
+        <div role="alert" className="flex gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <AlertTriangle size={18} className="shrink-0" />
+          <span>The last SMS failed ({log.recent[0].status}). {explain(log.recent[0].status)}</span>
         </div>
       )}
 

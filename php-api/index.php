@@ -511,7 +511,9 @@ function sendSMS(string $phone, string $text, string $reference = '', ?string $l
     $msgId  = $json['messages'][0]['messageId'] ?? null;
     try { qn('INSERT INTO sms_logs (recipient_phone,message,reference,status,message_id) VALUES (?,?,?,?,?)',
               [$to, $logText ?? $text, $ref, substr($status, 0, 50), $msgId]); } catch (Exception) {}
-    return isset($json['messages'][0]['status']['groupId']);
+    // Sent only if Next SMS accepted it: a refusal (e.g. REJECTED_SOURCE = sender ID not
+    // registered) also carries a groupId, so check the group name instead
+    return in_array(strtoupper((string)($json['messages'][0]['status']['groupName'] ?? '')), ['PENDING', 'DELIVERED'], true);
 }
 
 // Text sent to a phone in the last $minutes whose reference starts with $refPrefix (to stop SMS spam).
