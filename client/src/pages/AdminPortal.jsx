@@ -18,6 +18,7 @@ import { TZ_LOCATIONS } from '../data/tz_locations';
 import AvailabilitySwitch from '../components/admin/AvailabilitySwitch';
 import QuickAddHouse from '../components/admin/QuickAddHouse';
 import RegisterStudent from '../components/admin/RegisterStudent';
+import HousePhotos from '../components/admin/HousePhotos';
 import Sheet, { LoginDetails, ErrorNote } from '../components/admin/Sheet';
 import AdminAnalytics from './AdminAnalytics';
 
@@ -480,12 +481,16 @@ function Dashboard() {
 }
 
 // Properties
+// A house is public only with a photo and a priced room type (same rule as the server's publicHouseSql)
+const isDraft = (p) => !(Number(p.photo_count) > 0 && Number(p.priced_rooms) > 0);
+
 function PropertiesList() {
   const { isAdmin, isSeniorStaff } = useAuth();
   const [all, setAll]           = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [verifiedFilter, setVerifiedFilter] = useState(''); // '' | '1' | '0'
   const [availFilter, setAvailFilter] = useState('');      // '' | 'available' | 'full'
+  const [listingFilter, setListingFilter] = useState('');  // '' | 'live' | 'draft'
   const [quickOpen, setQuickOpen] = useState(false);
   const [q, setQ]               = useState('');
   const [uniFilter, setUniFilter] = useState('');
@@ -520,6 +525,7 @@ function PropertiesList() {
     if (uniFilter && String(p.university_id) !== uniFilter) return false;
     if (typeFilter && (p.property_type||'').toLowerCase() !== typeFilter.toLowerCase()) return false;
     if (availFilter && (p.availability || 'available') !== availFilter) return false;
+    if (listingFilter && (isDraft(p) ? 'draft' : 'live') !== listingFilter) return false;
     return true;
   });
   const setAvail = (id, v) => setAll(list => list.map(p => p.id === id ? { ...p, availability: v } : p));
@@ -549,7 +555,7 @@ function PropertiesList() {
     load();
   };
 
-  const activeFilters = [q, uniFilter, typeFilter, verifiedFilter, availFilter].filter(Boolean).length;
+  const activeFilters = [q, uniFilter, typeFilter, verifiedFilter, availFilter, listingFilter].filter(Boolean).length;
 
   return (
     <div className="p-4 sm:p-5 lg:p-8">
@@ -605,8 +611,16 @@ function PropertiesList() {
               {lbl}
             </button>
           ))}
+          <span className="w-px h-4 bg-slate-200 mx-1"/>
+          <span className="text-xs text-slate-400 font-semibold uppercase tracking-wide mr-1">On site:</span>
+          {[['','All'],['live','Live'],['draft','Drafts']].map(([v,lbl]) => (
+            <button key={v} onClick={() => setListingFilter(v)}
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${listingFilter===v?'bg-primary text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              {lbl}
+            </button>
+          ))}
           {activeFilters > 0 && (
-            <button onClick={() => { setQ(''); setUniFilter(''); setTypeFilter(''); setVerifiedFilter(''); setAvailFilter(''); }}
+            <button onClick={() => { setQ(''); setUniFilter(''); setTypeFilter(''); setVerifiedFilter(''); setAvailFilter(''); setListingFilter(''); }}
               className="ml-auto text-xs text-red-500 hover:text-red-700 font-semibold flex items-center gap-1">
               <X size={12}/> Clear filters
             </button>
@@ -636,6 +650,11 @@ function PropertiesList() {
                   <span className="font-semibold text-slate-900">{p.name}</span>
                   {p.verified ? <span className="badge-green">Verified</span> : null}
                   <StatusBadge status={p.status} />
+                  {isDraft(p) && p.status === 'approved' && (
+                    <span className="badge badge-amber" title="Not shown on the website until it has a photo and a price">
+                      Draft: {[!Number(p.photo_count) && 'needs photos', !Number(p.priced_rooms) && 'needs a price'].filter(Boolean).join(', ')}
+                    </span>
+                  )}
                   {p.property_type && <span className="badge badge-blue">{p.property_type}</span>}
                 </div>
                 <div className="text-xs text-slate-500 mt-0.5">{p.area} · {p.university_name} · Zone {p.zone_code||'—'}</div>
@@ -1434,6 +1453,20 @@ function PropertyDetail() {
             className="text-primary hover:underline">View on map →</a>
         </div>
       )}
+
+      {(() => {   // draft banner: what is missing before the house shows on the website
+        const rooms = Array.isArray(prop.rooms) ? prop.rooms : [];
+        const photoCount = (prop.photos?.length || 0) + rooms.reduce((n, r) => n + (r.photos?.length || 0), 0);
+        const priced = rooms.some(r => Number(r.monthly_price) > 0);
+        if (photoCount && priced) return null;
+        return (
+          <div role="status" className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <b>Draft: not on the website yet.</b> It goes live by itself once it has{' '}
+            {[!photoCount && 'at least one photo (use Add photos below)', !priced && 'a room type with a price (Add Room)'].filter(Boolean).join(' and ')}.
+          </div>
+        );
+      })()}
+      <HousePhotos propertyId={prop.id} photos={Array.isArray(prop.photos) ? prop.photos : []} onChange={load} />
 
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

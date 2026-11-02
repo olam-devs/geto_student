@@ -39,15 +39,17 @@ export default function QuickAddHouse({ onClose, onSaved, onUseFullForm }) {
         availability: f.availability,
       });
       let photoNote = '';
+      let live = false;   // public only with a photo (the price is required above)
       if (photos.length) {
         try {
           const fd = new FormData();
           photos.forEach(p => fd.append('photos[]', p));
           const r = await api.post(`/admin/properties/${data.id}/photos`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-          photoNote = `${r.data?.uploaded ?? photos.length} photo(s) added.`;
+          live = (r.data?.uploaded ?? 0) > 0;
+          photoNote = live ? `${r.data.uploaded} photo(s) added.` : 'The photos could not be saved. Add them from the house page.';
         } catch { photoNote = 'The house was saved, but the photos did not upload. Add them from the house page.'; }
       }
-      setDone({ id: data.id, owner: data.owner, photoNote });
+      setDone({ id: data.id, owner: data.owner, photoNote, live });
       onSaved?.();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not save the house. Check your connection and try again.');
@@ -62,7 +64,11 @@ export default function QuickAddHouse({ onClose, onSaved, onUseFullForm }) {
           <Link to={`/admin/properties/${done.id}`} onClick={onClose} className="btn-primary justify-center min-h-[44px] flex-1">Open house page</Link>
         </div>}>
         <div className="space-y-4">
-          <p className="text-slate-700"><b>{f.name}</b> is live on the site now.</p>
+          {done.live
+            ? <p className="text-slate-700"><b>{f.name}</b> is live on the site now.</p>
+            : <p className="text-sm rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2.5">
+                <b>{f.name}</b> is saved as a <b>draft</b>. It goes on the website once it has a photo: open the house page and use <b>Add photos</b>.
+              </p>}
           {done.photoNote && <p className="text-sm text-slate-600">{done.photoNote}</p>}
           <NewAccountNotice account={done.owner} who="owner" />
         </div>

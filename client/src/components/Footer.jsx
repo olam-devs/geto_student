@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { SUPPORT_PHONE, SUPPORT_TEL, supportWhatsApp } from '../support';
+import { SUPPORT_PHONE, SUPPORT_TEL, SUPPORT_EMAIL, supportWhatsApp } from '../support';
 import { Link } from 'react-router-dom';
 import { MapPin, Phone, Mail } from 'lucide-react';
 
@@ -68,7 +68,7 @@ export default function Footer() {
             <li className="flex items-start gap-2"><MapPin size={14} className="text-accent-500 mt-0.5 shrink-0"/><span>Dar es Salaam, Tanzania</span></li>
             <li className="flex items-center gap-2"><Phone size={14} className="text-accent-500"/><a href={SUPPORT_TEL} className="hover:text-accent-500">{SUPPORT_PHONE}</a></li>
             <li className="flex items-center gap-2"><Phone size={14} className="text-accent-500"/><a href={supportWhatsApp()} target="_blank" rel="noreferrer" className="hover:text-accent-500">WhatsApp: {SUPPORT_PHONE}</a></li>
-            <li className="flex items-center gap-2"><Mail size={14} className="text-accent-500"/><a href="mailto:info@getostudent.tz" className="hover:text-accent-500">info@getostudent.tz</a></li>
+            <li className="flex items-center gap-2"><Mail size={14} className="text-accent-500"/><a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-accent-500">{SUPPORT_EMAIL}</a></li>
           </ul>
         </div>
       </div>

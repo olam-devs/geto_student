@@ -480,6 +480,17 @@ function makeReferralCode(string $name): string {
     return $code;
 }
 
+// ─── Draft houses ──────────────────────────────────────────────
+// The public site shows a house only when it is approved AND complete: at least one photo
+// (of the house or a room) and at least one room type with a price. Until then it stays a
+// draft that only staff see, and it goes live by itself once both are added.
+function publicHouseSql(string $a = 'p'): string {
+    return "$a.status='approved'
+            AND (EXISTS(SELECT 1 FROM property_photos ph_pub WHERE ph_pub.property_id=$a.id)
+                 OR EXISTS(SELECT 1 FROM room_photos rp_pub JOIN rooms rr_pub ON rr_pub.id=rp_pub.room_id WHERE rr_pub.property_id=$a.id))
+            AND EXISTS(SELECT 1 FROM rooms rp_price WHERE rp_price.property_id=$a.id AND rp_price.monthly_price > 0)";
+}
+
 // ─── Customer care ─────────────────────────────────────────────
 // There is no SMS: people who can't log in contact customer care, who reset the password
 // in the admin portal and give it to them by WhatsApp or phone.
@@ -966,7 +977,7 @@ function routeUniversities(array $parts, string $method): void {
               FROM universities u
               LEFT JOIN zones z ON z.id=u.zone_id
               LEFT JOIN clusters c ON c.id=u.cluster_id
-              LEFT JOIN properties p ON p.nearest_university_id=u.id AND p.status='approved'
+              LEFT JOIN properties p ON p.nearest_university_id=u.id AND ".publicHouseSql('p')."
               WHERE u.active=1
               GROUP BY u.id ORDER BY u.name"));
     }
@@ -1040,7 +1051,7 @@ function routeProperties(array $parts, string $method): void {
                 LEFT JOIN zones z ON z.id=p.zone_id
                 LEFT JOIN clusters c ON c.id=p.cluster_id
                 LEFT JOIN rooms r ON r.property_id=p.id
-                WHERE p.status='approved'";
+                WHERE ".publicHouseSql('p');
         $params = [];
         if (!empty($_GET['university_id'])) {
             $uid = (int)$_GET['university_id'];
@@ -1100,7 +1111,7 @@ function routeProperties(array $parts, string $method): void {
                     LEFT JOIN zones z ON z.id=p.zone_id
                     LEFT JOIN clusters c ON c.id=p.cluster_id
                     LEFT JOIN users ow ON ow.id=p.owner_id
-                    WHERE p.id=? AND p.status='approved'", [$id]);
+                    WHERE p.id=? AND ".publicHouseSql('p'), [$id]);
         if (!$prop) err(404, 'Nyumba haikupatikana.');
         unset($prop['owner_id'],$prop['rejection_note']);
         $photos    = q('SELECT * FROM property_photos WHERE property_id=? ORDER BY is_main DESC,sort_order', [$id]);
@@ -1769,7 +1780,7 @@ function routeStudent(array $parts, string $method): void {
     if ($method === 'POST' && $sub === 'bookings') {
         foreach (['property_id','room_id','move_in_date'] as $f)
             if (empty($b[$f])) err(400, "$f required.");
-        $prop = q1("SELECT owner_id FROM properties WHERE id=? AND status='approved'", [(int)$b['property_id']]);
+        $prop = q1("SELECT p.owner_id FROM properties p WHERE p.id=? AND ".publicHouseSql('p'), [(int)$b['property_id']]);
         if (!$prop) err(404, 'Property not found or not available.');
         $room = q1('SELECT id, total_count, capacity, property_id FROM rooms WHERE id=? AND property_id=?',
                    [(int)$b['room_id'],(int)$b['property_id']]);
@@ -1827,7 +1838,7 @@ function routeStudent(array $parts, string $method): void {
     if ($method === 'POST' && $sub === 'viewings') {
         foreach (['property_id','preferred_date'] as $f)
             if (empty($b[$f])) err(400, "$f required.");
-        $prop = q1("SELECT owner_id FROM properties WHERE id=? AND status='approved'", [(int)$b['property_id']]);
+        $prop = q1("SELECT p.owner_id FROM properties p WHERE p.id=? AND ".publicHouseSql('p'), [(int)$b['property_id']]);
         if (!$prop) err(404, 'Property not found.');
         $vid = qx("INSERT INTO viewing_requests (student_id,property_id,owner_id,preferred_date,preferred_time,notes,status)
                    VALUES (?,?,?,?,?,?,'pending')",
@@ -1849,7 +1860,7 @@ function routeStudent(array $parts, string $method): void {
               JOIN properties p ON p.id=sp.property_id
               JOIN universities u ON u.id=p.nearest_university_id
               LEFT JOIN rooms r ON r.property_id=p.id
-              WHERE sp.student_id=? AND p.status='approved'
+              WHERE sp.student_id=? AND ".publicHouseSql('p')."
               GROUP BY p.id ORDER BY sp.saved_at DESC", [$u['id']]));
     }
 
@@ -2119,16 +2130,17 @@ function adminAnalytics(int $days): array {
 
 // GET /api/site-stats — real numbers for the homepage (public)
 function routeSiteStats(): void {
+    $live = publicHouseSql('p');
     $r = q1("SELECT
-        (SELECT COUNT(*) FROM properties WHERE status='approved') AS houses,
-        (SELECT COUNT(*) FROM properties WHERE status='approved' AND availability='available') AS houses_available,
-        (SELECT COUNT(*) FROM properties WHERE status='approved' AND verified=1) AS houses_verified,
-        (SELECT COUNT(*) FROM universities) AS universities,
+        (SELECT COUNT(*) FROM properties p WHERE $live) AS houses,
+        (SELECT COUNT(*) FROM properties p WHERE $live AND p.availability='available') AS houses_available,
+        (SELECT COUNT(*) FROM properties p WHERE $live AND p.verified=1) AS houses_verified,
+        (SELECT COUNT(*) FROM universities WHERE active=1) AS universities,
         (SELECT COUNT(*) FROM (
-            SELECT nearest_university_id AS uid FROM properties WHERE status='approved'
+            SELECT p.nearest_university_id AS uid FROM properties p WHERE $live
             UNION
             SELECT pu.university_id FROM property_universities pu
-              JOIN properties p ON p.id=pu.property_id WHERE p.status='approved'
+              JOIN properties p ON p.id=pu.property_id WHERE $live
          ) t) AS universities_with_houses");
     ok(array_map('intval', $r));
 }
@@ -2298,6 +2310,9 @@ function routeAdmin(array $parts, string $method): void {
     if ($method === 'GET' && $sub === 'properties' && !$sub2) {
         $sql = "SELECT p.id,p.name,p.property_type,p.area,p.status,p.verified,p.views_count,p.created_at,
                        p.availability,p.availability_updated_at,
+                       (SELECT COUNT(*) FROM property_photos ph2 WHERE ph2.property_id=p.id)
+                         + (SELECT COUNT(*) FROM room_photos rp2 JOIN rooms r2 ON r2.id=rp2.room_id WHERE r2.property_id=p.id) AS photo_count,
+                       (SELECT COUNT(*) FROM rooms r3 WHERE r3.property_id=p.id AND r3.monthly_price > 0) AS priced_rooms,
                        p.rejection_note,z.code AS zone_code,z.name AS zone_name,c.name AS cluster_name,
                        u.name AS university_name,ow.name AS owner_name,ow.phone AS owner_phone,
                        COALESCE(
@@ -2447,6 +2462,19 @@ function routeAdmin(array $parts, string $method): void {
         if (!q1('SELECT id FROM properties WHERE id=?', [$pid])) err(404, 'Property not found.');
         $saved = saveUploadedPhotos($pid);
         ok(['uploaded'=>count($saved),'photos'=>$saved]);
+    }
+
+    // ── DELETE /api/admin/photos/:id — remove a house photo (zone managers: their zone) ──
+    if ($method === 'DELETE' && $sub === 'photos' && is_numeric($sub2)) {
+        $photo = q1("SELECT ph.id, ph.property_id, ph.url, ph.is_main FROM property_photos ph
+                     JOIN properties p ON p.id=ph.property_id WHERE ph.id=? AND $zoneClause",
+                    array_merge([(int)$sub2], $zoneParams));
+        if (!$photo) err(404, 'Photo not found or not in your zone.');
+        if (str_starts_with((string)$photo['url'], '/uploads/')) @unlink(rtrim($_SERVER['DOCUMENT_ROOT'], '/').$photo['url']);
+        qn('DELETE FROM property_photos WHERE id=?', [(int)$photo['id']]);
+        if ((int)$photo['is_main'])   // keep a main photo for listing cards
+            qn('UPDATE property_photos SET is_main=1 WHERE property_id=? ORDER BY sort_order, id LIMIT 1', [(int)$photo['property_id']]);
+        ok(['deleted'=>true]);
     }
 
     // ── POST /api/admin/rooms/:id/photos — upload room photos ─

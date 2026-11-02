@@ -14,7 +14,7 @@ function HeroShowcase({ slides, housesAvailable, onOpen }) {
   const [paused, setPaused] = useState(false);
   useEffect(() => {
     if (slides.length < 2 || paused) return;
-    const t = setInterval(() => setCur(i => (i + 1) % slides.length), 4000);
+    const t = setInterval(() => setCur(i => (i + 1) % slides.length), 2500);   // next house every 2.5 s
     return () => clearInterval(t);
   }, [slides.length, paused]);
   if (!slides.length) return null;
@@ -31,7 +31,7 @@ function HeroShowcase({ slides, housesAvailable, onOpen }) {
         <div className="relative overflow-hidden bg-slate-100" style={{ aspectRatio: '4/3' }}>
           {slides.map((s, i) => (
             <img key={s.id} src={s.main_photo} alt={i === cur ? s.name : ''} loading={i === 0 ? 'eager' : 'lazy'}
-              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
+              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
               style={{ opacity: cur === i ? 1 : 0 }}
             />
           ))}
