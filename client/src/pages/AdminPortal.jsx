@@ -74,23 +74,24 @@ const ZONE_MANAGER_NAV = [
   { path: '/admin/staff',        icon: Shield,        label: 'My Geto Officers' },
 ];
 
-function Sidebar({ open, onClose }) {
+// Numbers for the sidebar (bookings in progress, houses waiting for approval), scoped by the
+// server like the lists they open. Refreshed every minute and on every page change.
+function useAdminBadges() {
+  const loc = useLocation();
+  const [badges, setBadges] = useState({ bookings_open: 0, bookings_new: 0, properties_pending: 0 });
+  useEffect(() => {
+    const load = () => api.get('/admin/badges').then(r => { if (r.data) setBadges(r.data); }).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
+  }, [loc.pathname]);
+  return badges;
+}
+
+function Sidebar({ open, onClose, badges }) {
   const { user, isAdmin, isZoneManager, isGetoManager, logout } = useAuth();
   const navigate = useNavigate();
   const loc = useLocation();
-  const [pendingCount, setPendingCount] = useState(0);
-
-  useEffect(() => {
-    if (!isZoneManager || isAdmin) return;
-    const fetch = () =>
-      api.get('/admin/properties', { params: { status: 'pending', limit: 1 } })
-        .then(r => setPendingCount(Array.isArray(r.data) ? r.data.length : 0))
-        .catch(() => {});
-    fetch();
-    // refresh every 2 minutes while sidebar is mounted
-    const t = setInterval(fetch, 120000);
-    return () => clearInterval(t);
-  }, [isZoneManager, isAdmin]);
 
   const handleLogout = () => { logout(); navigate('/admin/login'); };
   const nav = isAdmin ? [...ADMIN_NAV, ...ADMIN_ONLY_NAV]
@@ -143,15 +144,20 @@ function Sidebar({ open, onClose }) {
         <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-1">
           {nav.map(({ path, icon: Icon, label }) => {
             const active = loc.pathname === path || (path !== '/admin' && loc.pathname.startsWith(path));
-            const badge = isZoneManager && !isAdmin && path === '/admin/properties' && pendingCount > 0;
+            const count = path === '/admin/bookings' ? badges.bookings_open
+                        : (path === '/admin/properties' && isZoneManager && !isAdmin) ? badges.properties_pending : 0;
+            const hint = path === '/admin/bookings'
+              ? `${count} booking${count !== 1 ? 's' : ''} in progress${badges.bookings_new ? `, ${badges.bookings_new} new` : ''}`
+              : `${count} house${count !== 1 ? 's' : ''} waiting for approval`;
             return (
               <Link key={path} to={path} onClick={onClose}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all
                   ${active ? 'bg-white/15 text-white' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}>
                 <Icon size={18}/>{label}
-                {badge && (
-                  <span className="ml-auto bg-amber-400 text-amber-900 text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
-                    {pendingCount}
+                {count > 0 && (
+                  <span title={hint} aria-label={hint}
+                    className="ml-auto bg-amber-400 text-amber-900 text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                    {count > 99 ? '99+' : count}
                   </span>
                 )}
               </Link>
@@ -168,13 +174,21 @@ function Sidebar({ open, onClose }) {
   );
 }
 
-function TopBar({ onMenuClick }) {
+function TopBar({ onMenuClick, attention = 0 }) {
   const loc = useLocation();
   const nav = [...ADMIN_NAV, ...ADMIN_ONLY_NAV];
   const current = nav.find(n => n.path === loc.pathname || (n.path !== '/admin' && loc.pathname.startsWith(n.path)));
   return (
     <header className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 lg:px-6">
-      <button className="lg:hidden p-2 rounded-lg hover:bg-slate-100" onClick={onMenuClick}><Menu size={20}/></button>
+      <button className="lg:hidden relative p-2 rounded-lg hover:bg-slate-100" onClick={onMenuClick}
+        aria-label={attention ? `Menu, ${attention} need${attention === 1 ? 's' : ''} attention` : 'Menu'}>
+        <Menu size={20}/>
+        {attention > 0 && (
+          <span aria-hidden="true" className="absolute -top-0.5 -right-0.5 bg-amber-400 text-amber-900 text-[10px] font-bold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center">
+            {attention > 99 ? '99+' : attention}
+          </span>
+        )}
+      </button>
       <h2 className="font-semibold text-slate-800 text-sm">{current?.label || 'Dashboard'}</h2>
     </header>
   );
@@ -3590,11 +3604,13 @@ export default function AdminPortal() {
   const { isAdmin, isZoneManager } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const loc = useLocation();
+  const badges = useAdminBadges();
+  const attention = badges.bookings_open + (isZoneManager && !isAdmin ? badges.properties_pending : 0);
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} badges={badges} />
       <div className="flex-1 flex flex-col min-w-0 lg:ml-64 overflow-y-auto">
-        <TopBar onMenuClick={() => setSidebarOpen(true)} />
+        <TopBar onMenuClick={() => setSidebarOpen(true)} attention={attention} />
         <PageErrorBoundary resetKey={loc.pathname}>
         <Routes>
           <Route index element={<Dashboard />} />

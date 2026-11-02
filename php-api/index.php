@@ -2273,6 +2273,20 @@ function routeAdmin(array $parts, string $method): void {
             'visits_today'=>$visits_today,'visits_total'=>$visits_total]);
     }
 
+    // ── GET /api/admin/badges — numbers for the sidebar, scoped like the lists they open ──
+    // Bookings in progress = not yet paid and confirmed: pending, assigned, awaiting payment, payment confirmed.
+    if ($method === 'GET' && $sub === 'badges') {
+        $bk = q1("SELECT COUNT(*) AS open_count, SUM(b.status='pending') AS new_count
+                  FROM bookings b JOIN properties p ON p.id=b.property_id
+                  WHERE $bookingClause AND b.status IN ('pending','assigned','payment_pending','payment_confirmed')",
+                 $bookingParams);
+        $pp = $isSeniorStaff
+            ? q1("SELECT COUNT(*) AS n FROM properties p WHERE $zoneClause AND p.status='pending'", $zoneParams)
+            : ['n' => 0];
+        ok(['bookings_open' => (int)($bk['open_count'] ?? 0), 'bookings_new' => (int)($bk['new_count'] ?? 0),
+            'properties_pending' => (int)($pp['n'] ?? 0)]);
+    }
+
     // ── GET /api/admin/analytics?days=30 — visits, sign-ups, bookings, referrals (admin only) ──
     if ($method === 'GET' && $sub === 'analytics') {
         if (!$isAdmin) err(403, 'Admin only.');
