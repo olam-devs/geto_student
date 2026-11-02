@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, CheckCircle2, AlertCircle, Building2, GraduationCap, Shield, MapPin, LogIn, AtSign, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, CheckCircle2, AlertCircle, Building2, GraduationCap, Shield, MapPin, LogIn, AtSign, Loader2, Phone, MessageCircle } from 'lucide-react';
+import { SUPPORT_PHONE, SUPPORT_TEL, supportWhatsApp } from '../support';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
 
@@ -103,8 +104,8 @@ export default function Auth({ staffMode = false }) {
 
   // Referral links (/auth?ref=CODE) open sign-up with the code filled in
   const refCode = (sp.get('ref') || '').trim().toUpperCase().slice(0, 20);
-  const [tab, setTab]       = useState(staffMode ? 'staff-login' : (sp.get('tab') || (refCode ? 'register' : 'login')));
-  const [resetToken] = useState(sp.get('token') || '');
+  const startTab = sp.get('tab') === 'reset-password' ? 'forgot-password' : sp.get('tab');
+  const [tab, setTab]       = useState(staffMode ? 'staff-login' : (startTab || (refCode ? 'register' : 'login')));
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState('');
   const [success, setSuccess] = useState('');
@@ -147,18 +148,6 @@ export default function Auth({ staffMode = false }) {
     e.preventDefault();
     setError(''); setSuccess(''); setLoading(true);
     try {
-      if (tab === 'forgot-password') {
-        await api.post('/auth/forgot-password', { phone_or_email: f.phone_or_email || f.email });
-        setSuccess('If your phone/email is registered, you will receive a password reset link via SMS shortly.');
-        setLoading(false); return;
-      }
-      if (tab === 'reset-password') {
-        if (f.password.length < 8) { setError('Password must be at least 8 characters.'); setLoading(false); return; }
-        if (f.password !== confirmPw) { setError('Passwords do not match.'); setLoading(false); return; }
-        await api.post('/auth/reset-password', { token: resetToken, password: f.password });
-        setSuccess('Password updated! You can now sign in.');
-        setTab('login'); setLoading(false); return;
-      }
       if (tab === 'login') {
         const res = await login(f.phone_or_email, f.password);
         const dest = res.user?.role === 'student' ? '/dashboard' : '/portal';
@@ -274,7 +263,7 @@ export default function Auth({ staffMode = false }) {
 
           <div className="card overflow-hidden">
             {/* Tabs */}
-            {tab !== 'forgot-password' && tab !== 'reset-password' && (
+            {tab !== 'forgot-password' && (
             <div className="grid grid-cols-2 border-b border-slate-100">
               {TABS.map(t => (
                 <button key={t.id} onClick={() => { setTab(t.id); setError(''); setSuccess(''); setUsernameStatus(null); }}
@@ -284,11 +273,9 @@ export default function Auth({ staffMode = false }) {
               ))}
             </div>
             )}
-            {(tab === 'forgot-password' || tab === 'reset-password') && (
+            {tab === 'forgot-password' && (
               <div className="bg-primary px-6 py-4 text-center">
-                <p className="font-display font-semibold text-white text-sm">
-                  {tab === 'forgot-password' ? 'Reset Your Password' : 'Set New Password'}
-                </p>
+                <p className="font-display font-semibold text-white text-sm">Forgot your password?</p>
               </div>
             )}
 
@@ -364,8 +351,8 @@ export default function Auth({ staffMode = false }) {
                 </div>
               )}
 
-              {/* ── Phone / Email (login + forgot) ── */}
-              {(tab === 'login' || tab === 'forgot-password') && (
+              {/* ── Phone / Email (login) ── */}
+              {tab === 'login' && (
               <div>
                 <label className="label">Phone Number or Email</label>
                 <input value={f.phone_or_email} onChange={e => set('phone_or_email', e.target.value)} type="text" className="input" placeholder="+255 700 000 000 or email" required autoFocus />
@@ -414,7 +401,7 @@ export default function Auth({ staffMode = false }) {
                 <label className="label">Password {tab==='register'&&<span className="text-slate-400 text-xs">(min. 8 characters)</span>}</label>
                 <div className="relative">
                   <input value={f.password} onChange={e => set('password', e.target.value)}
-                    type={showPw?'text':'password'} className="input pr-10" placeholder="••••••••" required minLength={tab==='register'||tab==='reset-password'?8:1} />
+                    type={showPw?'text':'password'} className="input pr-10" placeholder="••••••••" required minLength={tab==='register'?8:1} />
                   <button type="button" onClick={() => setShowPw(v=>!v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                     {showPw ? <EyeOff size={16}/> : <Eye size={16}/>}
                   </button>
@@ -428,15 +415,27 @@ export default function Auth({ staffMode = false }) {
               </div>
               )}
 
-              {/* ── Forgot password hint ── */}
+              {/* ── Forgot password: customer care resets it (there is no SMS reset) ── */}
               {tab === 'forgot-password' && (
-                <p className="text-sm text-slate-600 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-                  Enter your registered phone number or email and we will send a password reset link via SMS.
-                </p>
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-600">
+                    Contact Geto customer care. We'll check it's you and give you a new password by WhatsApp or phone.
+                  </p>
+                  <a href={supportWhatsApp(`Hello Geto, I can't log in to my account.${f.phone_or_email ? ` My phone/email: ${f.phone_or_email}` : ''}`)}
+                    target="_blank" rel="noreferrer"
+                    className="w-full min-h-[48px] inline-flex items-center justify-center gap-2 rounded-xl bg-accent-700 hover:bg-accent-600 text-white font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-accent-700">
+                    <MessageCircle size={18} aria-hidden="true" />WhatsApp customer care
+                  </a>
+                  <a href={SUPPORT_TEL}
+                    className="w-full min-h-[48px] inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 text-slate-700 font-semibold hover:border-primary hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                    <Phone size={18} aria-hidden="true" />Call {SUPPORT_PHONE}
+                  </a>
+                  <p className="text-xs text-slate-500">After you log in with the new password, change it in your profile.</p>
+                </div>
               )}
 
-              {/* ── Confirm password (register and reset-password) ── */}
-              {(tab === 'register' || tab === 'reset-password') && (
+              {/* ── Confirm password (register) ── */}
+              {tab === 'register' && (
                 <div>
                   <label className="label">Confirm Password</label>
                   <div className="relative">
@@ -485,15 +484,13 @@ export default function Auth({ staffMode = false }) {
               {error   && <div className="flex gap-2 items-start bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-sm text-red-700"><AlertCircle size={15} className="shrink-0 mt-0.5"/>{error}</div>}
               {success && <div className="flex gap-2 items-start bg-green-50 border border-green-200 rounded-xl px-3 py-2.5 text-sm text-green-700"><CheckCircle2 size={15} className="shrink-0 mt-0.5"/>{success}</div>}
 
-              <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3 text-base">
-                {loading ? 'Please wait…'
-                  : tab === 'login' ? 'Sign In'
-                  : tab === 'forgot-password' ? 'Send Reset Link'
-                  : tab === 'reset-password' ? 'Set New Password'
-                  : 'Create Account'}
-              </button>
+              {tab !== 'forgot-password' && (
+                <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3 text-base">
+                  {loading ? 'Please wait…' : tab === 'login' ? 'Sign In' : 'Create Account'}
+                </button>
+              )}
 
-              {(tab === 'forgot-password' || tab === 'reset-password') && (
+              {tab === 'forgot-password' && (
                 <button type="button" onClick={() => { setTab('login'); setError(''); setSuccess(''); }}
                   className="w-full text-center text-sm text-primary-700 hover:underline mt-1">
                   ← Back to Sign In

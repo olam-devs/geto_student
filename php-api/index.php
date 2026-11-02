@@ -480,66 +480,22 @@ function makeReferralCode(string $name): string {
     return $code;
 }
 
-// ─── SMS Helper ────────────────────────────────────────────────
-// $logText: what to store in sms_logs instead of $text (to keep passwords and reset links out of the database)
-function sendSMS(string $phone, string $text, string $reference = '', ?string $logText = null): bool {
-    if (!defined('SMS_TOKEN') || !SMS_TOKEN) return false;
-    $ref = $reference ?: 'geto'.time();
-    // Next SMS expects 255XXXXXXXXX; numbers are stored as typed (07…, +255…), so convert here.
-    $to  = ltrim(normalizePhone($phone), '+');
-    $ch  = curl_init(defined('SMS_API_URL') ? SMS_API_URL : 'https://messaging-service.co.tz/api/sms/v2/text/single');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_HTTPHEADER     => [
-            'Authorization: Bearer '.SMS_TOKEN,
-            'Content-Type: application/json',
-            'Accept: application/json',
-        ],
-        CURLOPT_POSTFIELDS  => json_encode(['from'=>SMS_SENDER,'to'=>$to,'text'=>$text,'flash'=>0,'reference'=>$ref]),
-        CURLOPT_TIMEOUT     => 10,
-        CURLOPT_SSL_VERIFYPEER => true,
-    ]);
-    $resp = curl_exec($ch);
-    $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $cerr = curl_error($ch);
-    curl_close($ch);
-    $json   = json_decode((string)$resp, true);
-    // Keep the reason when there is no normal reply, so the SMS log shows why it failed
-    $status = $json['messages'][0]['status']['name']
-           ?? ($cerr ? 'NETWORK_ERROR: '.substr($cerr, 0, 60) : 'HTTP_'.$http.': '.substr((string)($json['message'] ?? $resp), 0, 60));
-    $msgId  = $json['messages'][0]['messageId'] ?? null;
-    try { qn('INSERT INTO sms_logs (recipient_phone,message,reference,status,message_id) VALUES (?,?,?,?,?)',
-              [$to, $logText ?? $text, $ref, substr($status, 0, 50), $msgId]); } catch (Exception) {}
-    // Sent only if Next SMS accepted it: a refusal (e.g. REJECTED_SOURCE = sender ID not
-    // registered) also carries a groupId, so check the group name instead
-    return in_array(strtoupper((string)($json['messages'][0]['status']['groupName'] ?? '')), ['PENDING', 'DELIVERED'], true);
+// ─── Customer care ─────────────────────────────────────────────
+// There is no SMS: people who can't log in contact customer care, who reset the password
+// in the admin portal and give it to them by WhatsApp or phone.
+function supportContact(): array {
+    $phone  = defined('SUPPORT_PHONE') ? SUPPORT_PHONE : '+255 657 925 368';
+    $digits = preg_replace('/\D/', '', $phone);
+    return ['phone' => $phone, 'whatsapp' => "https://wa.me/$digits"];
 }
 
-// Text sent to a phone in the last $minutes whose reference starts with $refPrefix (to stop SMS spam).
-function recentSmsCount(string $refPrefix, int $minutes): int {
-    try {
-        return (int)(q1("SELECT COUNT(*) AS cnt FROM sms_logs WHERE reference LIKE ? AND sent_at >= NOW() - INTERVAL ? MINUTE",
-                        [$refPrefix.'%', $minutes])['cnt'] ?? 0);
-    } catch (Exception) { return 0; }
-}
-
-// Plain email through the server's mail system (used as an extra channel for password resets).
-function sendEmail(string $to, string $subject, string $text): bool {
-    if (!filter_var($to, FILTER_VALIDATE_EMAIL)) return false;
-    $from = defined('MAIL_FROM') ? MAIL_FROM : 'no-reply@getostudent.co.tz';
-    $headers = "From: Geto Student <$from>\r\nReply-To: $from\r\nContent-Type: text/plain; charset=UTF-8\r\nMIME-Version: 1.0";
-    return @mail($to, '=?UTF-8?B?'.base64_encode($subject).'?=', $text, $headers, '-f'.$from);
-}
-
-function getAdminPhone(): ?string {
-    $r = q1("SELECT phone FROM users WHERE role='admin' AND status='active' LIMIT 1");
-    return $r['phone'] ?? null;
-}
-
-function adminBookingSmsCountToday(): int {
-    $r = q1("SELECT COUNT(*) AS cnt FROM sms_logs WHERE DATE(sent_at)=CURDATE() AND reference LIKE 'booking-%'");
-    return (int)($r['cnt'] ?? 0);
+// Temporary password that staff give to a user. 6 random characters from an alphabet without
+// look-alikes (no 0/O, 1/I/L): about a billion options, so it can't be guessed quickly.
+function tempPassword(): string {
+    $abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    $s = '';
+    for ($i = 0; $i < 6; $i++) $s .= $abc[random_int(0, strlen($abc) - 1)];
+    return 'Geto-' . $s;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -952,49 +908,12 @@ function routeAuth(array $parts, string $method): void {
         ok(['updated'=>true,'username'=>$uname]);
     }
 
-    // POST /api/auth/forgot-password — reset link by SMS, plus email if the account has one.
-    // The sign-in page sends phone_or_email; phone works in any format. Max 3 links per hour per account.
+    // POST /api/auth/forgot-password — no SMS or email: point people to customer care, who reset
+    // the password in the admin portal (POST /api/admin/users/:id/reset-password).
     if ($method === 'POST' && $sub === 'forgot-password') {
-        $cred = trim((string)($b['phone_or_email'] ?? $b['email'] ?? $b['phone'] ?? ''));
-        if ($cred === '') err(400, 'Enter your phone number or email.');
-        if (str_contains($cred, '@')) {
-            $user = q1("SELECT id,name,phone,email FROM users WHERE email=? AND status='active'", [strtolower($cred)]);
-        } else {
-            $m = usersByPhone($cred);
-            $user = (count($m) === 1 && $m[0]['status'] === 'active')
-                ? q1('SELECT id,name,phone,email FROM users WHERE id=?', [$m[0]['id']]) : null;
-        }
-        $recent = $user ? (int)(q1("SELECT COUNT(*) AS cnt FROM password_reset_tokens
-                                    WHERE user_id=? AND created_at >= NOW() - INTERVAL 1 HOUR", [$user['id']])['cnt'] ?? 0) : 0;
-        if ($user && $recent < 3) {
-            $token = bin2hex(random_bytes(32));
-            qn('UPDATE password_reset_tokens SET used=1 WHERE user_id=? AND used=0', [$user['id']]);   // only the newest link works
-            qn("INSERT INTO password_reset_tokens (user_id,token,expires_at) VALUES (?,?,DATE_ADD(NOW(),INTERVAL 1 HOUR))",
-               [$user['id'], $token]);
-            // Fixed site address: never build the link from the request's Host header (link-spoofing risk)
-            $resetUrl = (defined('SITE_URL') ? SITE_URL : 'https://getostudent.co.tz') . "/auth?tab=reset-password&token=$token";
-            sendSMS($user['phone'], "GETO STUDENT: Badilisha nenosiri: $resetUrl (Muda: saa 1)", 'pw-reset-'.$user['id'].'-'.time(),
-                    'GETO STUDENT: Badilisha nenosiri: [reset link hidden] (Muda: saa 1)');
-            if (!empty($user['email']))
-                sendEmail($user['email'], 'Geto Student: reset your password',
-                    "Hello {$user['name']},\n\nUse this link to set a new password (valid for 1 hour):\n$resetUrl\n\n"
-                  . "Tumia kiungo hiki kubadilisha nenosiri (kinafanya kazi kwa saa 1).\n\n"
-                  . "If you didn't ask for this, ignore this message.\n\nGeto Student");
-        }
-        ok(['message'=>'If this phone number or email is registered, a reset link has been sent.']);
-    }
-
-    // POST /api/auth/reset-password
-    if ($method === 'POST' && $sub === 'reset-password') {
-        $token    = trim($b['token'] ?? '');
-        $password = $b['password'] ?? '';
-        if (!$token) err(400, 'Reset token required.');
-        if (strlen($password) < 8) err(400, 'Password must be at least 8 characters.');
-        $row = q1("SELECT * FROM password_reset_tokens WHERE token=? AND used=0 AND expires_at > NOW()", [$token]);
-        if (!$row) err(400, 'Invalid or expired reset link. Please request a new one.');
-        qn('UPDATE users SET password_hash=? WHERE id=?', [hashPwd($password), $row['user_id']]);
-        qn('UPDATE password_reset_tokens SET used=1 WHERE id=?', [$row['id']]);
-        ok(['message'=>'Password updated successfully. You can now sign in.']);
+        $c = supportContact();
+        ok(['message' => "Contact Geto customer care on {$c['phone']} (call or WhatsApp) and we will reset your password.",
+            'support' => $c]);
     }
 
     err(404, 'Auth route not found.');
@@ -1992,9 +1911,9 @@ function usersByPhone(string $phone): array {
               ORDER BY id LIMIT 2", [$key]);
 }
 
-// Find a student or owner by phone, or create the account with a temporary password.
-// Call inside a transaction, then sendWelcomeSms() after commit, so a failed save
-// never leaves an account behind or texts a password for an account that doesn't exist.
+// Find a student or owner by phone, or create the account with a temporary password that
+// staff share with the person (WhatsApp or phone). Call inside a transaction, so a failed save
+// never leaves an account behind.
 function findOrCreateUser(string $name, string $phone, string $role, array $extra = []): array {
     $name = trim($name); $phone = trim($phone);
     if ($name === '' || strlen(phoneKey($phone)) < 9) err(400, 'Name and a valid phone number are required.');
@@ -2007,23 +1926,14 @@ function findOrCreateUser(string $name, string $phone, string $role, array $extr
             err(409, "This phone number already belongs to $what ({$u['name']}).");
         }
         return ['id'=>(int)$u['id'], 'name'=>$u['name'], 'phone'=>$u['phone'],
-                'created'=>false, 'temp_password'=>null, 'sms_sent'=>false];
+                'created'=>false, 'temp_password'=>null];
     }
-    $pw = 'Geto' . random_int(1000, 9999);
+    $pw = tempPassword();
     $id = qx("INSERT INTO users (name,phone,password_hash,role,status,university_id,business_name,referral_code,terms_accepted)
               VALUES (?,?,?,?,'active',?,?,?,0)",
              [$name, $phone, hashPwd($pw), $role, $extra['university_id'] ?? null,
               $extra['business_name'] ?? null, makeReferralCode($name)]);
-    return ['id'=>$id, 'name'=>$name, 'phone'=>$phone, 'created'=>true, 'temp_password'=>$pw, 'sms_sent'=>false];
-}
-
-// Text a newly created account its login details (staff also see the password once).
-function sendWelcomeSms(?array &$acct): void {
-    if (!$acct || !$acct['created']) return;
-    $acct['sms_sent'] = sendSMS(ltrim(normalizePhone($acct['phone']), '+'),
-        "Karibu Geto Student! Ingia https://getostudent.co.tz/auth kwa simu {$acct['phone']} na nenosiri {$acct['temp_password']}",
-        "welcome-{$acct['id']}",
-        "Karibu Geto Student! Ingia https://getostudent.co.tz/auth kwa simu {$acct['phone']} na nenosiri [hidden]");
+    return ['id'=>$id, 'name'=>$name, 'phone'=>$phone, 'created'=>true, 'temp_password'=>$pw];
 }
 
 // Where a visit came from. Returns [label, referring website or null].
@@ -2357,28 +2267,19 @@ function routeAdmin(array $parts, string $method): void {
         ok(adminAnalytics(max(1, min(365, (int)($_GET['days'] ?? 30)))));
     }
 
-    // ── GET /api/admin/sms-log — recent SMS and delivery status (admin only) ──
-    if ($method === 'GET' && $sub === 'sms-log') {
-        if (!$isAdmin) err(403, 'Admin only.');
-        ok(['configured' => defined('SMS_TOKEN') && SMS_TOKEN !== '',
-            'by_status'  => intCols(q("SELECT status, COUNT(*) AS n, MAX(sent_at) AS last FROM sms_logs
-                                       WHERE sent_at >= NOW() - INTERVAL 30 DAY GROUP BY status ORDER BY n DESC"), ['n']),
-            'recent'     => q("SELECT id, sent_at, recipient_phone, SUBSTRING_INDEX(reference,'-',1) AS kind, status,
-                                      CASE WHEN reference LIKE 'pw-reset-%' THEN 'Password reset link (hidden)'
-                                           WHEN reference LIKE 'welcome-%'  THEN 'Login details (hidden)'
-                                           ELSE LEFT(message, 160) END AS message
-                               FROM sms_logs ORDER BY id DESC LIMIT 50")]);
-    }
-
-    // ── POST /api/admin/sms-test {phone} — send a test SMS to check SMS works (admin only, 5 per hour) ──
-    if ($method === 'POST' && $sub === 'sms-test') {
-        if (!$isAdmin) err(403, 'Admin only.');
-        if (strlen(phoneKey((string)($b['phone'] ?? ''))) < 9) err(400, 'Enter a valid phone number.');
-        if (!defined('SMS_TOKEN') || SMS_TOKEN === '') err(503, 'SMS is not set up: SMS_TOKEN is empty in _config.php.');
-        if (recentSmsCount('test-', 60) >= 5) err(429, 'Test limit reached (5 per hour). Try again later.');
-        $sent = sendSMS((string)$b['phone'], 'GETO STUDENT: Test SMS - ujumbe umefika. SMS inafanya kazi.', 'test-'.time());
-        $row  = q1("SELECT status, recipient_phone FROM sms_logs WHERE reference LIKE 'test-%' ORDER BY id DESC LIMIT 1");
-        ok(['sent' => $sent, 'status' => $row['status'] ?? null, 'to' => $row['recipient_phone'] ?? null]);
+    // ── POST /api/admin/users/:id/reset-password — customer care sets a new temporary password ──
+    // Admin: anyone. Zone manager: students, owners and managers, not staff. Geto officers: no.
+    if ($method === 'POST' && $sub === 'users' && is_numeric($sub2) && $sub3 === 'reset-password') {
+        if (!$isSeniorStaff) err(403, 'Admin or zone manager only.');
+        $target = q1('SELECT id,name,phone,role FROM users WHERE id=?', [(int)$sub2]);
+        if (!$target) err(404, 'User not found.');
+        if (!$isAdmin && in_array($target['role'], ['admin','zone_manager','geto_manager','geto_officer'], true))
+            err(403, 'Only an admin can reset a staff password.');
+        $pw = tempPassword();
+        qn('UPDATE users SET password_hash=? WHERE id=?', [hashPwd($pw), (int)$target['id']]);
+        error_log("Geto API: password reset for user {$target['id']} by staff {$u['id']}");
+        ok(['id'=>(int)$target['id'], 'name'=>$target['name'], 'phone'=>$target['phone'],
+            'role'=>$target['role'], 'temp_password'=>$pw]);
     }
 
     // ── PUT /api/admin/properties/:id/availability — mark a house Full or Rooms available ──
@@ -2502,7 +2403,6 @@ function routeAdmin(array $parts, string $method): void {
         }
         if (($b['availability'] ?? '') === 'full') qn("UPDATE properties SET availability='full', availability_updated_at=NOW() WHERE id=?", [$pid]);
         db()->commit();
-        sendWelcomeSms($owner);
         ok(['id'=>$pid, 'status'=>'approved', 'room_id'=>$roomId, 'owner'=>$owner,
             'message'=>'Property is now live. Schedule a verification visit to earn the Geto badge.']);
     }
@@ -3056,7 +2956,6 @@ function routeAdmin(array $parts, string $method): void {
                    $b2['move_in_date'],$b2['notes']??null,$initStatus,(int)$staff['id'],$staff['role'],
                    $isOfficer?(int)$staff['id']:null]);
         db()->commit();
-        sendWelcomeSms($newStudent);
         created(['id'=>$bid,'status'=>$initStatus,'student'=>$newStudent,
                  'message'=>'Booking created. Student will need to confirm after payment is recorded.']);
     }
@@ -3588,82 +3487,6 @@ function routeAdmin(array $parts, string $method): void {
     err(404, 'Admin route not found.');
 }
 
-// ─── /api/sms/* — SMS callback + tenant reminders ─────────────
-function routeSms(array $parts, string $method): void {
-    $sub = $parts[1] ?? '';
-
-    // POST /api/sms/callback — delivery report from Next SMS
-    if ($method === 'POST' && $sub === 'callback') {
-        $b = body();
-        $token = $_GET['token'] ?? ($b['token'] ?? '');
-        if (!hash_equals(SMS_CALLBACK_TOKEN, (string)$token)) { http_response_code(403); exit; }
-        $msgId  = $b['messageId'] ?? null;
-        $status = $b['status']['name'] ?? ($b['status'] ?? 'UNKNOWN');
-        if ($msgId) qn("UPDATE sms_logs SET status=? WHERE message_id=?", [$status, $msgId]);
-        ok(['received'=>true]);
-    }
-
-    // POST /api/sms/tenant-reminders — admin triggers monthly rent reminder to all active tenants
-    if ($method === 'POST' && $sub === 'tenant-reminders') {
-        requireAdmin();
-        $tenants = q("SELECT u.phone, u.name, p.name AS property_name, r.monthly_price
-                      FROM bookings b
-                      JOIN users u       ON u.id=b.student_id
-                      JOIN properties p  ON p.id=b.property_id
-                      JOIN rooms r       ON r.id=b.room_id
-                      WHERE b.status IN ('confirmed','payment_confirmed','student_confirmed','active','checked_in','move_in_completed')
-                      ORDER BY u.id");
-        $sent = 0;
-        foreach ($tenants as $t) {
-            $msg = "GETO STUDENT: Kumbusho - kodi ya {$t['property_name']} ni TZS ".number_format($t['monthly_price'])." kwa mwezi. Tafadhali lipa kwa wakati. Maswali: wasiliana na msimamizi wako.";
-            if (sendSMS($t['phone'], $msg, 'reminder-'.date('Ym').'-'.$sent)) $sent++;
-            if ($sent >= 100) break;
-        }
-        ok(['sent'=>$sent,'total'=>count($tenants)]);
-    }
-
-    // POST /api/sms/daily-summary — send activity summary (max 3/day, only if activity)
-    // Run by a cPanel cron job: POST https://getostudent.co.tz/api/sms/daily-summary?token=<CRON_TOKEN>
-    if ($method === 'POST' && $sub === 'daily-summary') {
-        $cronToken = defined('CRON_TOKEN') ? CRON_TOKEN : SMS_CALLBACK_TOKEN;
-        if ((string)$cronToken === '' || !hash_equals((string)$cronToken, (string)($_GET['token'] ?? ''))) err(403, 'Forbidden.');
-        // Check daily cap (max 3 summary SMS per day across both numbers)
-        $sentToday = q1("SELECT COUNT(*) AS cnt FROM sms_logs WHERE DATE(sent_at)=CURDATE() AND reference LIKE 'daily-summary-%'");
-        if ((int)($sentToday['cnt'] ?? 0) >= 6) ok(['skipped'=>true,'reason'=>'Daily limit reached (3 summaries × 2 numbers).']);
-
-        // Gather activity
-        $bookingsToday = q1("SELECT COUNT(*) AS cnt FROM bookings WHERE DATE(created_at)=CURDATE()");
-        $pendingApproval = q1("SELECT COUNT(*) AS cnt FROM properties WHERE status='pending'");
-        $pendingMgr = q1("SELECT COUNT(*) AS cnt FROM properties WHERE status='pending' AND created_by_role='zone_manager'");
-
-        $bCount = (int)($bookingsToday['cnt'] ?? 0);
-        $pCount = (int)($pendingApproval['cnt'] ?? 0);
-        $mCount = (int)($pendingMgr['cnt'] ?? 0);
-
-        // Only send if there's actual activity
-        if ($bCount === 0 && $pCount === 0 && $mCount === 0) {
-            ok(['skipped'=>true,'reason'=>'No activity to report.']);
-        }
-
-        // Build message
-        $parts2 = [];
-        if ($bCount > 0) $parts2[] = "Booking {$bCount} leo";
-        if ($pCount > 0) $parts2[] = "Idhini zinasubiri: {$pCount}";
-        if ($mCount > 0) $parts2[] = "Kutoka wasimamizi: {$mCount}";
-        $msg = "GETO muhtasari: " . implode(', ', $parts2) . ". Ingia portal kukagua: getostudent.co.tz/admin";
-
-        $numbers = ['0627404843', '0657925368'];
-        $ref = 'daily-summary-'.date('Ymd-His');
-        $sent = 0;
-        foreach ($numbers as $num) {
-            if (sendSMS($num, $msg, $ref.'-'.$num)) $sent++;
-        }
-        ok(['sent'=>$sent,'message'=>$msg,'bookings'=>$bCount,'pending'=>$pCount,'from_managers'=>$mCount]);
-    }
-
-    err(404, 'SMS route not found.');
-}
-
 // ─── /checkin/:token  — public QR scan page ────────────────────
 function routeCheckin(array $parts, string $method): void {
     $token = trim($parts[1] ?? '');
@@ -3748,7 +3571,6 @@ switch ($parts[0] ?? '') {
     case 'portal':       routePortal($parts, $method); break;
     case 'student':      routeStudent($parts, $method); break;
     case 'checkin':      routeCheckin($parts, $method); break;
-    case 'sms':          routeSms($parts, $method); break;
     case 'admin':        routeAdmin($parts, $method); break;
     case 'payments':     routePayments($parts, $method); break;
     case 'webhooks':     routeWebhooks($parts, $method); break;

@@ -56,29 +56,23 @@ export function ErrorNote({ children }) {
   );
 }
 
-// Shown once after staff create an account: the temporary password and whether the SMS went out.
-export function NewAccountNotice({ account, who }) {
+// Login details for staff to pass on (there is no SMS): copy them, or open WhatsApp with them ready to send.
+export function LoginDetails({ title, phone, password }) {
   const [copied, setCopied] = useState(false);
-  if (!account) return null;
-  if (!account.created) {
-    return <p className="text-sm text-slate-600">Linked to the existing {who} account <b>{account.name}</b> ({account.phone}).</p>;
-  }
-  const text = `Geto Student login\nPhone: ${account.phone}\nPassword: ${account.temp_password}\nhttps://getostudent.co.tz/auth`;
+  const text = `Geto Student login\nPhone: ${phone}\nPassword: ${password}\nhttps://getostudent.co.tz/auth\nPlease change your password after you log in.`;
   const copy = async () => {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
   };
-  const digits = String(account.phone).replace(/\D/g, '');
+  const digits = String(phone).replace(/\D/g, '');
   const wa = `https://wa.me/${digits.startsWith('0') ? '255' + digits.slice(1) : digits}?text=${encodeURIComponent(text)}`;
   return (
     <div className="rounded-xl border border-accent-200 bg-accent-50 p-4 space-y-3">
-      <p className="text-sm text-slate-700">New {who} account created for <b>{account.name}</b>.</p>
+      <p className="text-sm text-slate-700">{title}</p>
       <div className="grid grid-cols-2 gap-2 text-sm">
-        <div><div className="label mb-0.5">Phone</div><div className="font-mono font-semibold">{account.phone}</div></div>
-        <div><div className="label mb-0.5">Temporary password</div><div className="font-mono font-bold text-lg text-primary">{account.temp_password}</div></div>
+        <div><div className="label mb-0.5">Phone</div><div className="font-mono font-semibold break-all">{phone}</div></div>
+        <div><div className="label mb-0.5">Temporary password</div><div className="font-mono font-bold text-lg text-primary break-all">{password}</div></div>
       </div>
-      <p className={`text-xs font-medium ${account.sms_sent ? 'text-accent-700' : 'text-amber-700'}`}>
-        {account.sms_sent ? 'Login details were sent by SMS.' : 'The SMS could not be sent. Share the details below.'}
-      </p>
+      <p className="text-xs text-slate-600">Send these to the person on WhatsApp, or read them out on the phone.</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={copy} className="btn-sm min-h-[44px] sm:min-h-0 border border-slate-300 bg-white text-slate-700">
           {copied ? <Check size={14} /> : <Copy size={14} />}{copied ? 'Copied' : 'Copy details'}
@@ -90,4 +84,14 @@ export function NewAccountNotice({ account, who }) {
       <p className="text-xs text-slate-500">This password is shown only once.</p>
     </div>
   );
+}
+
+// Shown once after staff create an account (or link an existing one).
+export function NewAccountNotice({ account, who }) {
+  if (!account) return null;
+  if (!account.created) {
+    return <p className="text-sm text-slate-600">Linked to the existing {who} account <b>{account.name}</b> ({account.phone}).</p>;
+  }
+  return <LoginDetails title={<>New {who} account created for <b>{account.name}</b>.</>}
+    phone={account.phone} password={account.temp_password} />;
 }

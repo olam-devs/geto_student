@@ -91,7 +91,7 @@ export default function QuickAddHouse({ onClose, onSaved, onUseFullForm }) {
           <legend className="label px-1">Owner</legend>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field id="qh-oname" label="Name"><input id="qh-oname" className={inputCls} value={f.ownerName} onChange={set('ownerName')} autoComplete="off" /></Field>
-            <Field id="qh-ophone" label="Phone" hint="New owners get login details by SMS.">
+            <Field id="qh-ophone" label="Phone" hint="New owners: you get their login details to send on WhatsApp.">
               <input id="qh-ophone" className={inputCls} type="tel" inputMode="tel" value={f.ownerPhone} onChange={set('ownerPhone')} placeholder="07XX XXX XXX" />
             </Field>
           </div>

@@ -124,7 +124,7 @@ export default function RegisterStudent({ onClose, onCreated }) {
             </div>
           </div>
         ) : (
-          <Field id="rs-name" label="Student name" hint={digits(phone).length >= 9 && !looking ? 'New student: an account is created and login details are sent by SMS.' : undefined}>
+          <Field id="rs-name" label="Student name" hint={digits(phone).length >= 9 && !looking ? 'New student: an account is created and you get the login details to send on WhatsApp.' : undefined}>
             <input id="rs-name" className={inputCls} value={name} onChange={e => setName(e.target.value)} autoComplete="off" />
           </Field>
         )}

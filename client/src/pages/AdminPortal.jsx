@@ -10,7 +10,7 @@ import {
   ClipboardList, BadgeCheck, Phone, Mail, AtSign,
   ChevronLeft, Receipt, BookPlus, UserSearch, Home,
   Camera, Upload, ImagePlus, SkipForward,
-  Smartphone, SendHorizonal, Clock, CheckCircle2, BarChart3, MessageSquareText
+  Smartphone, SendHorizonal, Clock, CheckCircle2, BarChart3, KeyRound
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
@@ -18,8 +18,8 @@ import { TZ_LOCATIONS } from '../data/tz_locations';
 import AvailabilitySwitch from '../components/admin/AvailabilitySwitch';
 import QuickAddHouse from '../components/admin/QuickAddHouse';
 import RegisterStudent from '../components/admin/RegisterStudent';
+import Sheet, { LoginDetails, ErrorNote } from '../components/admin/Sheet';
 import AdminAnalytics from './AdminAnalytics';
-import AdminSms from './AdminSms';
 
 // ─── Simple typeahead for location values ──────────────────────
 function LocTypeahead({ value, onChange, options, placeholder, disabled }) {
@@ -64,7 +64,6 @@ const ADMIN_NAV = [
 ];
 const ADMIN_ONLY_NAV = [
   { path: '/admin/analytics',    icon: BarChart3,     label: 'Analytics' },
-  { path: '/admin/sms',          icon: MessageSquareText, label: 'SMS' },
   { path: '/admin/zones',        icon: Map,           label: 'Zones & Areas' },
   { path: '/admin/universities', icon: GraduationCap, label: 'Universities' },
   { path: '/admin/staff',        icon: Shield,        label: 'Zone Managers' },
@@ -1569,7 +1568,44 @@ function PropertyDetail() {
 }
 
 // Users
+// Customer care resets a password and passes the new one on (WhatsApp or phone): there is no SMS.
+function ResetPasswordSheet({ user, onClose }) {
+  const [busy, setBusy]     = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError]   = useState('');
+  const reset = async () => {
+    setBusy(true); setError('');
+    try { const { data } = await api.post(`/admin/users/${user.id}/reset-password`); setResult(data); }
+    catch (e) { setError(e.response?.data?.message || 'Could not reset the password. Try again.'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Sheet title="Reset password" icon={KeyRound} onClose={onClose}
+      footer={result
+        ? <button onClick={onClose} className="btn-primary w-full justify-center min-h-[48px]">Done</button>
+        : <button onClick={reset} disabled={busy} className="btn-primary w-full justify-center min-h-[48px]">
+            {busy ? <><Loader2 size={16} className="animate-spin"/>Resetting…</> : 'Reset password'}
+          </button>}>
+      {result ? (
+        <LoginDetails title={<>New password for <b>{result.name}</b>. The old password no longer works.</>}
+          phone={result.phone} password={result.temp_password} />
+      ) : (
+        <div className="space-y-4 text-sm text-slate-700">
+          <p>Reset the password for <b>{user.name}</b> ({user.phone})?</p>
+          <p className="rounded-xl bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2.5">
+            First make sure you are talking to the account owner: the message or call should come from {user.phone}.
+          </p>
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
 function UsersList() {
+  const { isAdmin, isSeniorStaff } = useAuth();
+  const [q, setQ]           = useState('');
+  const [resetFor, setResetFor] = useState(null);
   const [users, setUsers]   = useState([]);
   const [role, setRole]     = useState('property_owner');
   const [loading, setLoading] = useState(true);
@@ -1609,8 +1645,16 @@ function UsersList() {
     finally { setOfSub(false); }
   };
 
+  // Search by name, email or phone; phone matches in any format (07…, 255…, +255 …)
+  const qDigits = q.replace(/\D/g, '').replace(/^(255|0)/, '');
+  const shown = users.filter(u => !q.trim()
+    || [u.name, u.email, u.username].some(v => (v || '').toLowerCase().includes(q.trim().toLowerCase()))
+    || (qDigits.length >= 3 && String(u.phone || '').replace(/\D/g, '').includes(qDigits)));
+  const canReset = (u) => isAdmin || (isSeniorStaff && ['student','property_owner','property_manager'].includes(u.role || role));
+
   return (
-    <div className="p-5 lg:p-8">
+    <div className="p-4 sm:p-5 lg:p-8">
+      {resetFor && <ResetPasswordSheet user={resetFor} onClose={() => setResetFor(null)} />}
       <div className="flex flex-wrap gap-2 mb-5">
         {['student','property_owner','property_manager','geto_officer','zone_manager'].map(r => (
           <button key={r} onClick={() => setRole(r)}
@@ -1642,6 +1686,12 @@ function UsersList() {
         </div>
       )}
 
+      <div className="relative mb-4 max-w-md">
+        <label htmlFor="user-search" className="sr-only">Search users</label>
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" aria-hidden="true"/>
+        <input id="user-search" className="input pl-9 text-base sm:text-sm min-h-[44px]" value={q} onChange={e => setQ(e.target.value)}
+          placeholder="Search name or phone (any format)" autoComplete="off"/>
+      </div>
       {loading ? <Spinner /> : (
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="min-w-full text-sm">
@@ -1651,8 +1701,8 @@ function UsersList() {
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {users.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No users found</td></tr>}
-              {users.map(u => (
+              {shown.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No users found</td></tr>}
+              {shown.map(u => (
                 <tr key={u.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{u.name}</td>
                   <td className="px-4 py-3 text-slate-500">{u.email}</td>
@@ -1691,6 +1741,11 @@ function UsersList() {
                       )}
                       {u.status === 'active' && (
                         <button onClick={() => suspend(u.id)} className="btn-sm border border-red-200 text-red-600 hover:bg-red-50 text-xs">Suspend</button>
+                      )}
+                      {canReset(u) && (
+                        <button onClick={() => setResetFor({ ...u, role: u.role || role })} className="btn-sm border border-slate-300 text-slate-700 hover:border-primary hover:text-primary text-xs whitespace-nowrap">
+                          <KeyRound size={12}/>Reset password
+                        </button>
                       )}
                     </div>
                   </td>
@@ -3516,7 +3571,6 @@ export default function AdminPortal() {
           <Route path="users"         element={<UsersList />} />
           <Route path="bookings"      element={<BookingsList />} />
           {isAdmin && <Route path="analytics"     element={<AdminAnalytics />} />}
-          {isAdmin && <Route path="sms"           element={<AdminSms />} />}
           {isAdmin && <Route path="zones"         element={<ZonesView />} />}
           {isAdmin && <Route path="universities"  element={<UniversitiesView />} />}
           {(isAdmin || isZoneManager) && <Route path="staff" element={<StaffView />} />}
