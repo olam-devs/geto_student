@@ -1,6 +1,15 @@
 <?php
 require __DIR__ . '/_config.php';
 
+// Snippe fee rate (defined here in case _config.php predates this deploy)
+if (!defined('GETO_FEE_RATE')) define('GETO_FEE_RATE', 0.75);
+
+set_exception_handler(function(\Throwable $e) {
+    http_response_code(500);
+    echo json_encode(['error'=>$e->getMessage(),'file'=>basename($e->getFile()),'line'=>$e->getLine()], JSON_UNESCAPED_UNICODE);
+    exit;
+});
+
 // ─── CORS & Headers ────────────────────────────────────────────
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
@@ -71,12 +80,218 @@ function qn(string $sql, array $p = []): int   { $st = db()->prepare($sql); $st-
 function migrate(): void {
     static $done = false; if ($done) return; $done = true;
     $pdo = db();
+    // ── Incremental column additions ──────────────────────────────
     foreach ([
         "ALTER TABLE properties ADD COLUMN latitude DECIMAL(10,8) NULL",
         "ALTER TABLE properties ADD COLUMN longitude DECIMAL(11,8) NULL",
         "ALTER TABLE users ADD COLUMN id_front_url VARCHAR(500) NULL",
         "ALTER TABLE users ADD COLUMN id_back_url VARCHAR(500) NULL",
+        "ALTER TABLE bookings ADD COLUMN qr_token VARCHAR(64) NULL",
+        "ALTER TABLE bookings ADD COLUMN amount_paid INT NULL",
+        "ALTER TABLE bookings ADD COLUMN contract_start DATE NULL",
+        "ALTER TABLE bookings ADD COLUMN contract_end DATE NULL",
+        "ALTER TABLE bookings ADD COLUMN room_unit_id INT UNSIGNED NULL",
+        "ALTER TABLE bookings ADD COLUMN assigned_at TIMESTAMP NULL",
+        "ALTER TABLE bookings ADD COLUMN assigned_by INT UNSIGNED NULL",
+        // Property type-specific fields
+        "ALTER TABLE properties ADD COLUMN gender_policy ENUM('mixed','female_only','male_only') DEFAULT 'mixed'",
+        "ALTER TABLE properties ADD COLUMN has_parking TINYINT(1) DEFAULT 0",
+        "ALTER TABLE properties ADD COLUMN has_compound TINYINT(1) DEFAULT 0",
+        "ALTER TABLE properties ADD COLUMN has_lift TINYINT(1) DEFAULT 0",
+        "ALTER TABLE properties ADD COLUMN warden_name VARCHAR(120) NULL",
+        "ALTER TABLE properties ADD COLUMN warden_phone VARCHAR(20) NULL",
+        "ALTER TABLE properties ADD COLUMN water_source ENUM('dawasco','borehole','tank','unknown') DEFAULT 'unknown'",
+        "ALTER TABLE properties ADD COLUMN electricity_backup ENUM('none','generator','solar','unknown') DEFAULT 'unknown'",
+        // Move-out statuses
+        "ALTER TABLE bookings MODIFY COLUMN status ENUM('pending','accepted','payment_pending','confirmed','move_in_completed','move_out_requested','move_out_completed','rejected','cancelled') DEFAULT 'pending'",
+        // Track who created each property
+        "ALTER TABLE properties ADD COLUMN created_by INT UNSIGNED NULL",
+        "ALTER TABLE properties ADD COLUMN created_by_role VARCHAR(30) NULL",
+        // Expand property_type to VARCHAR to support all types without ENUM restriction
+        "ALTER TABLE properties MODIFY COLUMN property_type VARCHAR(50) NOT NULL DEFAULT 'Hostel'",
+        // Older deploy columns — make nullable so INSERTs without them succeed
+        "ALTER TABLE properties MODIFY COLUMN agent_id INT NULL DEFAULT NULL",
+        "ALTER TABLE properties MODIFY COLUMN university_id INT NULL DEFAULT NULL",
+        "ALTER TABLE properties MODIFY COLUMN distance_km DECIMAL(5,2) NULL DEFAULT NULL",
+        "ALTER TABLE properties MODIFY COLUMN transport_options TEXT NULL",
+        "ALTER TABLE properties MODIFY COLUMN total_floors TINYINT NULL DEFAULT NULL",
+        "ALTER TABLE properties MODIFY COLUMN views_count INT NOT NULL DEFAULT 0",
+        "ALTER TABLE properties MODIFY COLUMN rejection_note TEXT NULL",
+        // Phone-first auth: email and whatsapp_phone are optional
+        "ALTER TABLE users MODIFY COLUMN email VARCHAR(191) NULL",
+        "ALTER TABLE users MODIFY COLUMN whatsapp_phone VARCHAR(30) NULL DEFAULT NULL",
+        // Expand role ENUM to include geto_manager and zone_manager
+        "ALTER TABLE users MODIFY COLUMN role ENUM('student','property_owner','property_manager','geto_manager','zone_manager','admin') NOT NULL DEFAULT 'student'",
+        "ALTER TABLE users ADD COLUMN phone_verified TINYINT(1) DEFAULT 0",
+        // Track which geto_manager helped a user register (optional referral)
+        "ALTER TABLE users MODIFY COLUMN referred_by INT NULL DEFAULT NULL",
+        // Username — unique, lowercase, required for students (optional at registration, forced on first login)
+        "ALTER TABLE users ADD COLUMN username VARCHAR(50) NULL",
+        // Booking state machine — new statuses for staff-managed payment flow
+        "ALTER TABLE bookings MODIFY COLUMN status ENUM('pending','assigned','accepted','payment_pending','payment_confirmed','student_confirmed','active','confirmed','checked_in','move_in_completed','move_out_requested','move_out_completed','checked_out','rejected','cancelled') DEFAULT 'pending'",
+        // Booking staff assignment — which GM is handling this booking's follow-up
+        "ALTER TABLE bookings ADD COLUMN assigned_to INT UNSIGNED NULL",
+        // Payment record fields — entered by GM/admin/ZM before student confirms
+        "ALTER TABLE bookings ADD COLUMN payment_receipt_ref VARCHAR(100) NULL",
+        "ALTER TABLE bookings ADD COLUMN payment_confirmed_by INT UNSIGNED NULL",
+        "ALTER TABLE bookings ADD COLUMN payment_confirmed_at TIMESTAMP NULL",
+        "ALTER TABLE bookings ADD COLUMN student_confirmed_at TIMESTAMP NULL",
+        "ALTER TABLE bookings ADD COLUMN payment_note TEXT NULL",
+        // Track when a booking was created by staff on behalf of a student
+        "ALTER TABLE bookings ADD COLUMN booked_by_staff INT UNSIGNED NULL",
+        "ALTER TABLE bookings ADD COLUMN booked_by_staff_role VARCHAR(30) NULL",
+        // Deposit months — how many months rent is collected upfront as deposit
+        "ALTER TABLE rooms ADD COLUMN deposit_months TINYINT UNSIGNED NOT NULL DEFAULT 1",
+        // Per-unit capacity override for shared rooms (NULL = inherit room type capacity)
+        "ALTER TABLE room_units ADD COLUMN capacity TINYINT UNSIGNED NULL",
+        // Tenant photo taken at payment time — shown on QR check-in scan
+        "ALTER TABLE bookings ADD COLUMN tenant_photo_url VARCHAR(500) NULL",
+        // Add geto_officer role alongside geto_manager (backward-compat rename)
+        "ALTER TABLE users MODIFY COLUMN role ENUM('student','property_owner','property_manager','geto_manager','geto_officer','zone_manager','admin') NOT NULL DEFAULT 'student'",
+        // Tanzania administrative location on properties
+        "ALTER TABLE properties ADD COLUMN region VARCHAR(100) NULL",
+        "ALTER TABLE properties ADD COLUMN district VARCHAR(100) NULL",
+        "ALTER TABLE properties ADD COLUMN ward VARCHAR(100) NULL",
+        // Fix legacy bookings.agent_id column that had no DEFAULT (strict mode error on INSERT)
+        "ALTER TABLE bookings MODIFY COLUMN agent_id INT NULL DEFAULT NULL",
+        // Owner opt-in for automatic deposit collection + payout via Snippe
+        "ALTER TABLE owner_payout_profiles ADD COLUMN auto_payout_enabled TINYINT(1) NOT NULL DEFAULT 0",
+        "ALTER TABLE owner_payout_profiles ADD COLUMN auto_payout_consented_at TIMESTAMP NULL",
     ] as $sql) { try { $pdo->exec($sql); } catch(\PDOException $e) {} }
+    // Zone coverage table — links a zone to specific regions/districts/wards
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS zone_coverage (
+        id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        zone_id     INT UNSIGNED NOT NULL,
+        coverage_type ENUM('region','district','ward') NOT NULL,
+        coverage_value VARCHAR(100) NOT NULL,
+        UNIQUE KEY uq_zone_cov (zone_id, coverage_type, coverage_value)
+    )"); } catch(\PDOException $e) {}
+    // Unique index for usernames (NULLs are exempt from unique constraint in MySQL)
+    try { $pdo->exec("CREATE UNIQUE INDEX idx_users_username ON users (username)"); } catch(\PDOException $e) {}
+    // Room-level photos and videos (per room type, not per property)
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS room_photos (
+        id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        room_id    INT UNSIGNED NOT NULL,
+        url        VARCHAR(500) NOT NULL,
+        is_main    TINYINT(1) DEFAULT 0,
+        sort_order INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_room (room_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } catch(\PDOException $e) {}
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS room_videos (
+        id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        room_id          INT UNSIGNED NOT NULL,
+        youtube_video_id VARCHAR(50) NOT NULL,
+        title            VARCHAR(200) NULL,
+        created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_room (room_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } catch(\PDOException $e) {}
+    // university_zones: many-to-many between universities and zones (admin managed)
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS university_zones (
+        university_id INT UNSIGNED NOT NULL,
+        zone_id       INT UNSIGNED NOT NULL,
+        created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (university_id, zone_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); } catch(\PDOException $e) {}
+    // Password reset tokens table
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id    INT UNSIGNED NOT NULL,
+        token      CHAR(64) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        used       TINYINT(1) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_token (token),
+        KEY idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } catch(\PDOException $e) {}
+    try { $pdo->exec("CREATE UNIQUE INDEX idx_qr_token ON bookings (qr_token)"); } catch(\PDOException $e) {}
+    // Performance indexes
+    foreach ([
+        "CREATE INDEX idx_bookings_student ON bookings (student_id)",
+        "CREATE INDEX idx_bookings_property ON bookings (property_id)",
+        "CREATE INDEX idx_bookings_status ON bookings (status)",
+        "CREATE INDEX idx_rooms_property ON rooms (property_id)",
+        "CREATE INDEX idx_rooms_price ON rooms (property_id, monthly_price)",
+        "CREATE INDEX idx_saved_student ON saved_properties (student_id)",
+        "CREATE INDEX idx_viewings_student ON viewing_requests (student_id)",
+    ] as $sql) { try { $pdo->exec($sql); } catch(\PDOException $e) {} }
+    // ── Reviews table ─────────────────────────────────────────────
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS property_reviews (
+        id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        property_id INT UNSIGNED NOT NULL,
+        student_id  INT UNSIGNED NOT NULL,
+        booking_id  INT UNSIGNED NOT NULL,
+        rating      TINYINT NOT NULL,
+        comment     TEXT NULL,
+        created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_booking_review (booking_id),
+        KEY idx_review_property (property_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } catch(\PDOException $e) {}
+    // ── Room units table ──────────────────────────────────────────
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS room_units (
+        id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        property_id  INT UNSIGNED NOT NULL,
+        room_type_id INT UNSIGNED NOT NULL,
+        unit_number  VARCHAR(20)  NOT NULL,
+        floor        TINYINT UNSIGNED DEFAULT 1,
+        status       ENUM('available','maintenance') DEFAULT 'available',
+        is_active    TINYINT(1) DEFAULT 1,
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE  KEY uq_unit  (property_id, unit_number),
+        INDEX   idx_floor    (property_id, floor),
+        INDEX   idx_type     (property_id, room_type_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    } catch(\PDOException $e) {}
+    // Page-view analytics table (used by /api/track and admin/stats)
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS page_views (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        page VARCHAR(255) NOT NULL DEFAULT '/',
+        ip_hash CHAR(64) NOT NULL DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_date (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } catch(\PDOException $e) {}
+    // ── Snippe payment tables ─────────────────────────────────────
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS owner_payout_profiles (
+        id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        owner_id       INT UNSIGNED NOT NULL,
+        payout_type    ENUM('mobile_money','bank') NOT NULL DEFAULT 'mobile_money',
+        provider       VARCHAR(30) NULL,
+        phone          VARCHAR(25) NULL,
+        account_name   VARCHAR(100) NULL,
+        account_number VARCHAR(50) NULL,
+        bank_name      VARCHAR(100) NULL,
+        created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_owner_payout (owner_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } catch(\PDOException $e) {}
+    try { $pdo->exec("CREATE TABLE IF NOT EXISTS payment_transactions (
+        id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        booking_id      INT UNSIGNED NULL,
+        property_id     INT UNSIGNED NOT NULL,
+        room_id         INT UNSIGNED NOT NULL,
+        student_id      INT UNSIGNED NOT NULL,
+        owner_id        INT UNSIGNED NOT NULL,
+        rent_amount     INT UNSIGNED NOT NULL,
+        deposit_months  TINYINT UNSIGNED NOT NULL DEFAULT 1,
+        deposit_amount  INT UNSIGNED NOT NULL,
+        geto_fee        INT UNSIGNED NOT NULL,
+        transaction_fee INT UNSIGNED NOT NULL DEFAULT 0,
+        total_amount    INT UNSIGNED NOT NULL,
+        student_phone   VARCHAR(25) NOT NULL,
+        snippe_ref      VARCHAR(100) NULL,
+        snippe_status   ENUM('pending','completed','failed','voided','expired') DEFAULT 'pending',
+        payout_status   ENUM('pending','completed','failed','skipped','not_configured') DEFAULT 'pending',
+        payout_ref      VARCHAR(100) NULL,
+        initiated_by    INT UNSIGNED NOT NULL,
+        initiated_by_role VARCHAR(30) NOT NULL,
+        webhook_data    JSON NULL,
+        created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at    TIMESTAMP NULL,
+        KEY idx_pt_booking  (booking_id),
+        KEY idx_pt_student  (student_id),
+        KEY idx_pt_owner    (owner_id),
+        KEY idx_pt_snippe   (snippe_ref)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } catch(\PDOException $e) {}
 }
 
 // ─── Auth Helpers ──────────────────────────────────────────────
@@ -92,10 +307,16 @@ function authUser(): array {
     return $data;
 }
 
-// Admin or Zone Manager — backend portal
+// Admin, Zone Manager, or Geto Officer — backend portal
 function requireStaff(): array {
     $u = authUser();
-    if (!in_array($u['role'] ?? '', ['admin', 'zone_manager'])) err(403, 'Backend staff only.');
+    if (!in_array($u['role'] ?? '', ['admin', 'zone_manager', 'geto_manager', 'geto_officer'])) err(403, 'Backend staff only.');
+    return $u;
+}
+// Admin or Zone Manager only (senior staff — can verify, manage staff)
+function requireSeniorStaff(): array {
+    $u = authUser();
+    if (!in_array($u['role'] ?? '', ['admin', 'zone_manager'])) err(403, 'Senior staff only.');
     return $u;
 }
 
@@ -110,7 +331,7 @@ function requireAdmin(): array {
 function requireOwner(): array {
     $u = authUser();
     if (!in_array($u['role'] ?? '', ['property_owner', 'property_manager'])) err(403, 'Property owner/manager only.');
-    if (($u['status'] ?? '') !== 'active') err(403, 'Account pending verification. Please wait for admin approval.');
+    if (($u['status'] ?? '') === 'suspended') err(403, 'Account suspended.');
     return $u;
 }
 
@@ -205,6 +426,33 @@ function saveUploadedPhotos(int $propertyId): array {
     return $saved;
 }
 
+// ─── Snippe helpers ────────────────────────────────────────────
+function snippePost(string $path, array $body, string $ikey = ''): array {
+    if (!defined('SNIPPE_API_KEY') || !SNIPPE_API_KEY) return ['code'=>500,'body'=>['message'=>'Snippe not configured']];
+    $hdrs = ['Authorization: Bearer '.SNIPPE_API_KEY,'Content-Type: application/json','Accept: application/json'];
+    if ($ikey) $hdrs[] = 'Idempotency-Key: '.substr($ikey,0,30);
+    $ch = curl_init('https://api.snippe.sh'.$path);
+    curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_POST=>true,
+        CURLOPT_POSTFIELDS=>json_encode($body),CURLOPT_HTTPHEADER=>$hdrs,CURLOPT_TIMEOUT=>30,CURLOPT_SSL_VERIFYPEER=>true]);
+    $resp = curl_exec($ch); $code = curl_getinfo($ch,CURLINFO_HTTP_CODE); curl_close($ch);
+    return ['code'=>$code,'body'=>json_decode((string)$resp,true)??[]];
+}
+function snippeGet(string $path): array {
+    if (!defined('SNIPPE_API_KEY') || !SNIPPE_API_KEY) return ['code'=>500,'body'=>['message'=>'Snippe not configured']];
+    $ch = curl_init('https://api.snippe.sh'.$path);
+    curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,
+        CURLOPT_HTTPHEADER=>['Authorization: Bearer '.SNIPPE_API_KEY,'Accept: application/json'],
+        CURLOPT_TIMEOUT=>15,CURLOPT_SSL_VERIFYPEER=>true]);
+    $resp = curl_exec($ch); $code = curl_getinfo($ch,CURLINFO_HTTP_CODE); curl_close($ch);
+    return ['code'=>$code,'body'=>json_decode((string)$resp,true)??[]];
+}
+function normalizePhone(string $phone): string {
+    $p = preg_replace('/\D/','',$phone);
+    if (str_starts_with($p,'0')) $p = '255'.substr($p,1);
+    if (!str_starts_with($p,'255')) $p = '255'.$p;
+    return '+'.$p;
+}
+
 // ─── Referral code generator ───────────────────────────────────
 function makeReferralCode(string $name): string {
     $base = strtoupper(preg_replace('/[^A-Z0-9]/', '', strtoupper($name)));
@@ -229,7 +477,7 @@ function sendSMS(string $phone, string $text, string $reference = ''): bool {
         ],
         CURLOPT_POSTFIELDS  => json_encode(['from'=>SMS_SENDER,'to'=>$phone,'text'=>$text,'flash'=>0,'reference'=>$ref]),
         CURLOPT_TIMEOUT     => 10,
-        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYPEER => true,
     ]);
     $resp = curl_exec($ch);
     curl_close($ch);
@@ -255,6 +503,236 @@ function adminBookingSmsCountToday(): int {
 //  ROUTE HANDLERS
 // ═══════════════════════════════════════════════════════════════
 
+// ─── /api/payments/* ───────────────────────────────────────────
+function routePayments(array $parts, string $method): void {
+    $sub = $parts[1] ?? '';
+    $b   = body();
+
+    // GET /api/payments/fee?amount=X  — estimate Snippe collection fee
+    if ($method === 'GET' && $sub === 'fee') {
+        authUser();
+        $amount = max(500,(int)($_GET['amount']??0));
+        $r = snippeGet('/v1/payouts/fee?amount='.$amount);
+        ok($r['body']['data'] ?? ['amount'=>$amount,'fee_amount'=>(int)round($amount*0.015),'total_amount'=>$amount+(int)round($amount*0.015),'currency'=>'TZS']);
+    }
+
+    // GET /api/payments/:ref  — payment status
+    if ($method === 'GET' && $sub && $sub !== 'fee') {
+        $u = authUser();
+        $txn = q1('SELECT * FROM payment_transactions WHERE snippe_ref=?',[$sub]);
+        if (!$txn) err(404,'Payment not found.');
+        $allowed = in_array($u['role'],['admin','zone_manager','geto_manager','geto_officer'])
+            || (int)$txn['owner_id']===(int)$u['id']
+            || (int)$txn['student_id']===(int)$u['id'];
+        if (!$allowed) err(403,'Access denied.');
+        ok($txn);
+    }
+
+    // POST /api/payments/initiate
+    if ($method === 'POST' && $sub === 'initiate') {
+        $u = authUser();
+        $allowed = in_array($u['role'],['admin','zone_manager','geto_manager','geto_officer','property_owner','property_manager']);
+        if (!$allowed) err(403,'Not authorized to initiate payments.');
+
+        $bookingId = !empty($b['booking_id']) ? (int)$b['booking_id'] : null;
+        $roomId    = !empty($b['room_id'])    ? (int)$b['room_id']    : null;
+        $studentId = !empty($b['student_id']) ? (int)$b['student_id'] : null;
+        $phone     = trim($b['phone']??'');
+
+        if ($bookingId) {
+            $bk = q1("SELECT b.*,r.monthly_price,r.deposit_months,p.owner_id,p.id AS prop_id,p.property_type,
+                             s.name AS s_name,s.email AS s_email,s.phone AS s_phone
+                      FROM bookings b
+                      JOIN rooms r ON r.id=b.room_id
+                      JOIN properties p ON p.id=b.property_id
+                      JOIN users s ON s.id=b.student_id
+                      WHERE b.id=?",[$bookingId]);
+            if (!$bk) err(404,'Booking not found.');
+            if ($u['role']==='property_owner' && (int)$bk['owner_id']!==(int)$u['id']) err(403,'Not your property.');
+            $roomId      = (int)$bk['room_id'];
+            $studentId   = (int)$bk['student_id'];
+            $ownerId     = (int)$bk['owner_id'];
+            $propId      = (int)$bk['prop_id'];
+            $monthly     = (int)$bk['monthly_price'];
+            $depMo       = (int)($bk['deposit_months'] ?? 1);
+            $propType    = $bk['property_type'] ?? 'Hostel';
+            $phone       = $phone ?: $bk['s_phone'];
+            $sName       = $bk['s_name']; $sEmail=$bk['s_email']??null;
+        } else {
+            if (!$roomId||!$studentId) err(400,'booking_id or (room_id + student_id) required.');
+            $room = q1("SELECT r.*,p.owner_id,p.id AS prop_id,p.property_type FROM rooms r JOIN properties p ON p.id=r.property_id WHERE r.id=?",[$roomId]);
+            if (!$room) err(404,'Room not found.');
+            if ($u['role']==='property_owner' && (int)$room['owner_id']!==(int)$u['id']) err(403,'Not your property.');
+            $ownerId  = (int)$room['owner_id'];
+            $propId   = (int)$room['prop_id'];
+            $monthly  = (int)$room['monthly_price'];
+            $depMo    = (int)($room['deposit_months'] ?? 1);
+            $propType = $room['property_type'] ?? 'Hostel';
+            $st = q1('SELECT name,email FROM users WHERE id=?',[$studentId]);
+            $sName=$st['name']??''; $sEmail=$st['email']??null;
+        }
+
+        if (!$phone) err(400,'Student phone number is required.');
+        $phone = normalizePhone($phone);
+
+        // Check if owner opted in to automatic deposit collection
+        $ownerProfile = q1('SELECT auto_payout_enabled FROM owner_payout_profiles WHERE owner_id=?',[$ownerId]);
+        $autoDeposit  = !empty($ownerProfile['auto_payout_enabled']);
+
+        // Hostel: 75% of monthly; all other property types: 100% (one full extra month)
+        $isHostel   = strtolower(trim($propType)) === 'hostel';
+        $feeRate    = $isHostel ? GETO_FEE_RATE : 1.0;
+        $depositAmt = $autoDeposit ? ($monthly * $depMo) : 0;
+        $getoFee    = $isHostel ? (int)round($monthly * GETO_FEE_RATE) : $monthly;
+        $subtotal   = $depositAmt + $getoFee;
+
+        // Estimate Snippe collection fee (~1.5%)
+        $feeR   = snippeGet('/v1/payouts/fee?amount='.$subtotal);
+        $txFee  = (int)($feeR['body']['data']['fee_amount'] ?? (int)round($subtotal*0.015));
+        $total  = $subtotal + $txFee;
+
+        $ikey  = substr('gp'.time().rand(10,99),0,30);
+        $txnId = qx('INSERT INTO payment_transactions
+                     (booking_id,property_id,room_id,student_id,owner_id,rent_amount,deposit_months,
+                      deposit_amount,geto_fee,transaction_fee,total_amount,student_phone,initiated_by,initiated_by_role)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [$bookingId,$propId,$roomId,$studentId,$ownerId,$monthly,$depMo,
+             $depositAmt,$getoFee,$txFee,$total,$phone,(int)$u['id'],$u['role']]);
+
+        $nameParts = explode(' ', trim($sName), 2);
+        $snippeR = snippePost('/v1/payments',[
+            'payment_type' => 'mobile',
+            'details'      => ['amount'=>$total,'currency'=>'TZS'],
+            'phone_number' => $phone,
+            'webhook_url'  => 'https://getostudent.co.tz/api/webhooks/snippe',
+            'customer'     => [
+                'firstname' => $nameParts[0],
+                'lastname'  => $nameParts[1] ?? $nameParts[0],
+                'email'     => $sEmail ?? '',
+                'phone'     => $phone,
+            ],
+            'metadata'     => ['txn_id'=>$txnId,'booking_id'=>$bookingId],
+        ],$ikey);
+
+        if ($snippeR['code']<200||$snippeR['code']>299) {
+            qn('DELETE FROM payment_transactions WHERE id=?',[$txnId]);
+            err(502,'Payment gateway error: '.($snippeR['body']['message']??'Unknown error'));
+        }
+        $ref = $snippeR['body']['data']['reference']??null;
+        if ($ref) qn('UPDATE payment_transactions SET snippe_ref=? WHERE id=?',[$ref,$txnId]);
+
+        ok([
+            'transaction_id' => $txnId,
+            'snippe_ref'     => $ref,
+            'auto_deposit'   => $autoDeposit,
+            'breakdown'      => [
+                'monthly_price'  => $monthly,
+                'property_type'  => $propType,
+                'deposit_months' => $depMo,
+                'deposit_amount' => $depositAmt,
+                'geto_fee'       => $getoFee,
+                'geto_fee_rate'  => $feeRate,
+                'transaction_fee'=> $txFee,
+                'total'          => $total,
+            ],
+            'phone'   => $phone,
+            'status'  => 'pending',
+            'message' => 'USSD push sent to '.$phone.'. Student must confirm on their phone.',
+        ]);
+    }
+
+    err(404,'Payments route not found.');
+}
+
+// ─── /api/webhooks/* ───────────────────────────────────────────
+function routeWebhooks(array $parts, string $method): void {
+    $sub = $parts[1] ?? '';
+
+    if ($method === 'POST' && $sub === 'snippe') {
+        $rawBody = file_get_contents('php://input');
+
+        // Verify HMAC signature — supports Snippe-Signature: t=...,v1=... or separate headers
+        if (defined('SNIPPE_WEBHOOK_SECRET') && SNIPPE_WEBHOOK_SECRET) {
+            $ts  = ''; $sig = '';
+            $snipHdr = $_SERVER['HTTP_SNIPPE_SIGNATURE']??'';
+            if ($snipHdr) {
+                foreach (explode(',', $snipHdr) as $part) {
+                    [$k,$v] = array_pad(explode('=',$part,2),2,'');
+                    if ($k==='t')  $ts  = trim($v);
+                    if ($k==='v1') $sig = trim($v);
+                }
+            } else {
+                $ts  = $_SERVER['HTTP_X_WEBHOOK_TIMESTAMP']??'';
+                $sig = $_SERVER['HTTP_X_WEBHOOK_SIGNATURE']??'';
+            }
+            if ($ts && $sig) {
+                if (abs(time()-(int)$ts)>300) { http_response_code(400); echo '{"error":"Timestamp too old"}'; exit; }
+                $expected = hash_hmac('sha256',$ts.'.'.$rawBody,SNIPPE_WEBHOOK_SECRET);
+                if (!hash_equals($expected,$sig))  { http_response_code(400); echo '{"error":"Invalid signature"}'; exit; }
+            }
+        }
+
+        $event = json_decode($rawBody,true);
+        if (!$event) { http_response_code(200); echo '{"ok":true}'; exit; }
+
+        $type = $event['event'] ?? $event['type'] ?? '';
+        $data = $event['data']??[];
+        $ref  = $data['reference']??'';
+
+        if ($type==='payment.completed' && $ref) {
+            $txn = q1('SELECT * FROM payment_transactions WHERE snippe_ref=?',[$ref]);
+            if ($txn && $txn['snippe_status']!=='completed') {
+                qn("UPDATE payment_transactions SET snippe_status='completed',completed_at=NOW(),webhook_data=? WHERE snippe_ref=?",
+                   [json_encode($event),$ref]);
+                if ($txn['booking_id']) {
+                    qn("UPDATE bookings SET status='payment_confirmed',amount_paid=?,payment_confirmed_at=NOW() WHERE id=?",
+                       [(int)$txn['deposit_amount'],(int)$txn['booking_id']]);
+                }
+                // Auto-payout to owner — only if owner opted in AND deposit was collected
+                $profile = q1('SELECT * FROM owner_payout_profiles WHERE owner_id=?',[(int)$txn['owner_id']]);
+                if ($profile && !empty($profile['auto_payout_enabled']) && (int)$txn['deposit_amount'] > 0) {
+                    $owner = q1('SELECT name FROM users WHERE id=?',[(int)$txn['owner_id']]);
+                    $pikey = substr('po'.$txn['id'].time(),0,30);
+                    $pb = [
+                        'amount'    => (int)$txn['deposit_amount'],
+                        'currency'  => 'TZS',
+                        'narration' => 'Geto payout booking #'.($txn['booking_id']??$txn['id']),
+                        'metadata'  => ['txn_id'=>$txn['id']],
+                    ];
+                    if ($profile['payout_type']==='mobile_money') {
+                        $pb['channel']   = ['type'=>'mobile_money','provider'=>$profile['provider']];
+                        $pb['recipient'] = ['name'=>$owner['name']??'Owner','phone'=>ltrim($profile['phone'],'+')];
+                    } else {
+                        $pb['channel']   = ['type'=>'bank','bank_name'=>$profile['bank_name']];
+                        $pb['recipient'] = ['name'=>$profile['account_name'],'account_number'=>$profile['account_number']];
+                    }
+                    $pr = snippePost('/v1/payouts/send',$pb,$pikey);
+                    $pRef = $pr['body']['data']['reference']??null;
+                    $pSt  = ($pr['code']>=200&&$pr['code']<300)?'pending':'failed';
+                    qn('UPDATE payment_transactions SET payout_status=?,payout_ref=? WHERE id=?',
+                       [$pSt,$pRef,(int)$txn['id']]);
+                } else {
+                    $noPayoutReason = (!$profile) ? 'not_configured' : (empty($profile['auto_payout_enabled']) ? 'owner_not_opted_in' : 'no_deposit_collected');
+                    qn("UPDATE payment_transactions SET payout_status=? WHERE id=?",[$noPayoutReason,(int)$txn['id']]);
+                }
+            }
+        } elseif (in_array($type,['payment.failed','payment.voided','payment.expired'])&&$ref) {
+            $st=str_replace('payment.','',$type);
+            qn("UPDATE payment_transactions SET snippe_status=?,webhook_data=? WHERE snippe_ref=?",
+               [$st,json_encode($event),$ref]);
+        } elseif ($type==='payout.completed') {
+            $pr=$data['reference']??'';
+            if ($pr) qn("UPDATE payment_transactions SET payout_status='completed' WHERE payout_ref=?",[$pr]);
+        } elseif ($type==='payout.failed') {
+            $pr=$data['reference']??'';
+            if ($pr) qn("UPDATE payment_transactions SET payout_status='failed' WHERE payout_ref=?",[$pr]);
+        }
+
+        http_response_code(200); echo '{"ok":true}'; exit;
+    }
+    err(404,'Webhook route not found.');
+}
+
 // ─── GET /api/health ───────────────────────────────────────────
 function routeHealth(): void {
     ok(['status'=>'ok','service'=>'Geto Student API v2','time'=>date('c')]);
@@ -271,23 +749,47 @@ function routeAuth(array $parts, string $method): void {
         $role = $b['role'] ?? 'student';
         if (!in_array($role, ['student','property_owner','property_manager']))
             err(400, 'Invalid role.');
-        foreach (['name','email','phone','password'] as $f)
+        // Phone is required; name and password required; email is optional
+        foreach (['name','phone','password'] as $f)
             if (empty($b[$f])) err(400, ucfirst($f).' is required.');
         if (empty($b['terms_accepted']) || !$b['terms_accepted'])
             err(400, 'You must accept the Terms & Conditions.');
         if (strlen($b['password']) < 8) err(400, 'Password must be at least 8 characters.');
-        if (q1('SELECT id FROM users WHERE email=?', [$b['email']]))
+        // Phone uniqueness check
+        if (q1('SELECT id FROM users WHERE phone=?', [$b['phone']]))
+            err(409, 'Phone number already registered.');
+        // Email uniqueness check only if email provided
+        $email = !empty($b['email']) ? trim($b['email']) : null;
+        if ($email && q1('SELECT id FROM users WHERE email=?', [$email]))
             err(409, 'Email already registered.');
+        // Username — required for students, optional for owners/managers (can set later)
+        $username = null;
+        if (!empty($b['username'])) {
+            $uname = strtolower(trim($b['username']));
+            if (!preg_match('/^[a-z0-9_]{3,30}$/', $uname))
+                err(400, 'Username must be 3–30 characters: lowercase letters, numbers, underscores only.');
+            if (q1('SELECT id FROM users WHERE username=?', [$uname]))
+                err(409, 'Username already taken. Please choose another.');
+            $username = $uname;
+        } elseif ($role === 'student') {
+            err(400, 'Username is required for students.');
+        }
 
-        // Owners and managers start as pending_verification; students are active immediately
-        $status = ($role === 'student') ? 'active' : 'pending_verification';
+        // All roles start active immediately — verified badge earned via inspection
+        $status = 'active';
+        // Optional: geto manager referral code (tracks which geto manager helped register)
+        $getoReferrerId = null;
+        if (!empty($b['geto_referral_code']) && in_array($role, ['property_owner','property_manager'])) {
+            $referrer = q1("SELECT id FROM users WHERE referral_code=? AND role IN ('geto_manager','geto_officer')", [$b['geto_referral_code']]);
+            if ($referrer) $getoReferrerId = $referrer['id'];
+        }
         $refCode = makeReferralCode($b['name']);
         $id = qx(
             "INSERT INTO users (name,email,phone,whatsapp_phone,password_hash,role,status,university_id,
-                                business_name,id_document_url,referral_code,terms_accepted,terms_accepted_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,1,NOW())",
-            [$b['name'],$b['email'],$b['phone'],$b['whatsapp_phone']??$b['phone'],hashPwd($b['password']),
-             $role,$status,$b['university_id']??null,$b['business_name']??null,null,$refCode]
+                                business_name,id_document_url,referral_code,referred_by,terms_accepted,terms_accepted_at,username)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,NOW(),?)",
+            [$b['name'],$email,$b['phone'],$b['whatsapp_phone']??null,hashPwd($b['password']),
+             $role,$status,$b['university_id']??null,$b['business_name']??null,null,$refCode,$getoReferrerId,$username]
         );
 
         // Handle referral
@@ -300,44 +802,48 @@ function routeAuth(array $parts, string $method): void {
             }
         }
 
-        if ($status === 'pending_verification') {
-            created(['message'=>'Registration submitted. Admin will verify your account within 24 hours.',
-                     'pending'=>true,'role'=>$role]);
-        }
-        $token = jwtSign(['id'=>$id,'role'=>$role,'status'=>$status,'name'=>$b['name'],'email'=>$b['email']]);
-        created(['token'=>$token,'user'=>['id'=>$id,'name'=>$b['name'],'email'=>$b['email'],
-                 'phone'=>$b['phone'],'role'=>$role,'status'=>$status,'referral_code'=>$refCode]]);
+        $token = jwtSign(['id'=>$id,'role'=>$role,'status'=>$status,'name'=>$b['name'],'email'=>$email,'phone'=>$b['phone'],'username'=>$username]);
+        created(['token'=>$token,'user'=>['id'=>$id,'name'=>$b['name'],'email'=>$email,
+                 'phone'=>$b['phone'],'role'=>$role,'status'=>$status,'referral_code'=>$refCode,'username'=>$username]]);
     }
 
     // POST /api/auth/login  — student, property_owner, property_manager
     if ($method === 'POST' && $sub === 'login') {
-        if (empty($b['email'])||empty($b['password'])) err(400, 'Email and password required.');
-        $user = q1('SELECT u.*, un.name AS university_name FROM users u LEFT JOIN universities un ON u.university_id=un.id WHERE u.email=?', [$b['email']]);
+        $cred = $b['phone_or_email'] ?? $b['email'] ?? '';
+        if (empty($cred)||empty($b['password'])) err(400, 'Phone/email and password required.');
+        // Detect phone vs email
+        $isPhone = !str_contains($cred, '@');
+        $user = $isPhone
+            ? q1('SELECT u.*, un.name AS university_name FROM users u LEFT JOIN universities un ON u.university_id=un.id WHERE u.phone=?', [$cred])
+            : q1('SELECT u.*, un.name AS university_name FROM users u LEFT JOIN universities un ON u.university_id=un.id WHERE u.email=?', [$cred]);
         if (!$user) err(401, 'Invalid credentials.');
         if (!checkPwd($b['password'], $user['password_hash'])) err(401, 'Invalid credentials.');
-        if (in_array($user['role'], ['admin','zone_manager'])) err(403, 'Use the staff login portal.');
+        if (in_array($user['role'], ['admin','zone_manager','geto_manager','geto_officer'])) err(403, 'Use the staff login portal.');
         if ($user['status'] === 'suspended') err(403, 'Account suspended. Contact support.');
-        if ($user['status'] === 'pending_verification')
-            err(403, 'Account pending verification. Admin will approve within 24 hours.');
         qn('UPDATE users SET last_login_at=NOW() WHERE id=?', [$user['id']]);
+        $needsUsername = ($user['role'] === 'student' && empty($user['username']));
         $token = jwtSign(['id'=>$user['id'],'role'=>$user['role'],'status'=>$user['status'],
-                          'name'=>$user['name'],'email'=>$user['email']]);
+                          'name'=>$user['name'],'email'=>$user['email'],'phone'=>$user['phone'],
+                          'username'=>$user['username']??null]);
         unset($user['password_hash']);
-        ok(['token'=>$token,'user'=>$user]);
+        ok(['token'=>$token,'user'=>$user,'needs_username'=>$needsUsername]);
     }
 
-    // POST /api/auth/staff/login  — admin, zone_manager (backend portal at /admin)
+    // POST /api/auth/staff/login  — admin, zone_manager, geto_officer (backend portal at /admin)
     if ($method === 'POST' && $sub === 'staff' && $sub2 === 'login') {
-        if (empty($b['email'])||empty($b['password'])) err(400, 'Email and password required.');
-        $user = q1('SELECT u.*, z.code AS zone_code, z.name AS zone_name FROM users u
-                    LEFT JOIN zones z ON z.id=u.zone_id WHERE u.email=?', [$b['email']]);
+        $cred = $b['phone_or_email'] ?? $b['email'] ?? '';
+        if (empty($cred)||empty($b['password'])) err(400, 'Phone/email and password required.');
+        $isPhone = !str_contains($cred, '@');
+        $user = $isPhone
+            ? q1('SELECT u.*, z.code AS zone_code, z.name AS zone_name FROM users u LEFT JOIN zones z ON z.id=u.zone_id WHERE u.phone=?', [$cred])
+            : q1('SELECT u.*, z.code AS zone_code, z.name AS zone_name FROM users u LEFT JOIN zones z ON z.id=u.zone_id WHERE u.email=?', [$cred]);
         if (!$user) err(401, 'Invalid credentials.');
         if (!checkPwd($b['password'], $user['password_hash'])) err(401, 'Invalid credentials.');
-        if (!in_array($user['role'], ['admin','zone_manager'])) err(403, 'Staff account required.');
+        if (!in_array($user['role'], ['admin','zone_manager','geto_manager','geto_officer'])) err(403, 'Staff account required.');
         if ($user['status'] !== 'active') err(403, 'Account suspended.');
         qn('UPDATE users SET last_login_at=NOW() WHERE id=?', [$user['id']]);
         $token = jwtSign(['id'=>$user['id'],'role'=>$user['role'],'status'=>$user['status'],
-                          'zone_id'=>$user['zone_id'],'name'=>$user['name'],'email'=>$user['email']]);
+                          'zone_id'=>$user['zone_id'],'name'=>$user['name'],'email'=>$user['email'],'phone'=>$user['phone']]);
         unset($user['password_hash']);
         ok(['token'=>$token,'user'=>$user]);
     }
@@ -347,17 +853,31 @@ function routeAuth(array $parts, string $method): void {
         $u = authUser();
         $user = q1("SELECT u.id,u.name,u.email,u.phone,u.whatsapp_phone,u.role,u.status,u.zone_id,
                            u.university_id,u.business_name,u.verified,u.referral_code,u.referred_by,
-                           u.avatar_url,u.last_login_at,u.created_at,
+                           u.avatar_url,u.last_login_at,u.created_at,u.username,
                            un.name AS university_name, z.code AS zone_code, z.name AS zone_name
                     FROM users u
                     LEFT JOIN universities un ON un.id=u.university_id
                     LEFT JOIN zones z ON z.id=u.zone_id
                     WHERE u.id=?", [$u['id']]);
-        ok(['user'=>$user]);
+        ok(['user'=>$user,'needs_username'=>($user['role']==='student' && empty($user['username']))]);
+    }
+
+    // GET /api/auth/username-check?u=xxx — public endpoint, works without auth (used during registration)
+    if ($method === 'GET' && $sub === 'username-check') {
+        $uname = strtolower(trim($_GET['u'] ?? ''));
+        if (!$uname || !preg_match('/^[a-z0-9_]{3,30}$/', $uname))
+            ok(['available'=>false,'error'=>'Username must be 3-30 characters: lowercase letters, numbers, underscores only.']);
+        // Optionally exclude the current user's own row (if they are logged in)
+        $excludeId = 0;
+        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        $tok = str_starts_with($h, 'Bearer ') ? substr($h, 7) : '';
+        if ($tok) { $payload = jwtVerify($tok); if ($payload) $excludeId = (int)($payload['id'] ?? 0); }
+        $conflict = q1('SELECT id FROM users WHERE username=? AND id!=?', [$uname, $excludeId]);
+        ok(['available'=>!$conflict]);
     }
 
     // PUT /api/auth/me  — update own profile
-    if ($method === 'PUT' && $sub === 'me') {
+    if ($method === 'PUT' && $sub === 'me' && $sub2 !== 'username') {
         $u = authUser();
         $b = body();
         $fields = []; $params = [];
@@ -371,6 +891,50 @@ function routeAuth(array $parts, string $method): void {
             qn('UPDATE users SET '.implode(',',$fields).' WHERE id=?', $params);
         }
         ok(['updated'=>true]);
+    }
+
+    // PUT /api/auth/me/username — set or change username
+    if ($method === 'PUT' && $sub === 'me' && $sub2 === 'username') {
+        $u = authUser();
+        $b = body();
+        $uname = strtolower(trim($b['username'] ?? ''));
+        if (!$uname || !preg_match('/^[a-z0-9_]{3,30}$/', $uname))
+            err(400, 'Username must be 3–30 characters: lowercase letters, numbers, underscores only.');
+        $conflict = q1('SELECT id FROM users WHERE username=? AND id!=?', [$uname,(int)$u['id']]);
+        if ($conflict) err(409, 'Username already taken. Please choose another.');
+        qn('UPDATE users SET username=? WHERE id=?', [$uname,(int)$u['id']]);
+        ok(['updated'=>true,'username'=>$uname]);
+    }
+
+    // POST /api/auth/forgot-password
+    if ($method === 'POST' && $sub === 'forgot-password') {
+        $email = strtolower(trim($b['email'] ?? ''));
+        if (!$email) err(400, 'Email required.');
+        $user = q1("SELECT id,name,phone FROM users WHERE email=? AND status='active'", [$email]);
+        if ($user) {
+            $token = bin2hex(random_bytes(32));
+            qn('DELETE FROM password_reset_tokens WHERE user_id=?', [$user['id']]);
+            qn("INSERT INTO password_reset_tokens (user_id,token,expires_at) VALUES (?,?,DATE_ADD(NOW(),INTERVAL 1 HOUR))",
+               [$user['id'], $token]);
+            $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+            $host  = $_SERVER['HTTP_HOST'] ?? 'getostudent.co.tz';
+            $resetUrl = "$proto://$host/auth?tab=reset-password&token=$token";
+            sendSMS($user['phone'], "GETO STUDENT: Badilisha nenosiri: $resetUrl (Muda: saa 1)", 'pw-reset-'.$user['id']);
+        }
+        ok(['message'=>'If your email is registered, you will receive a password reset link via SMS.']);
+    }
+
+    // POST /api/auth/reset-password
+    if ($method === 'POST' && $sub === 'reset-password') {
+        $token    = trim($b['token'] ?? '');
+        $password = $b['password'] ?? '';
+        if (!$token) err(400, 'Reset token required.');
+        if (strlen($password) < 8) err(400, 'Password must be at least 8 characters.');
+        $row = q1("SELECT * FROM password_reset_tokens WHERE token=? AND used=0 AND expires_at > NOW()", [$token]);
+        if (!$row) err(400, 'Invalid or expired reset link. Please request a new one.');
+        qn('UPDATE users SET password_hash=? WHERE id=?', [hashPwd($password), $row['user_id']]);
+        qn('UPDATE password_reset_tokens SET used=1 WHERE id=?', [$row['id']]);
+        ok(['message'=>'Password updated successfully. You can now sign in.']);
     }
 
     err(404, 'Auth route not found.');
@@ -392,7 +956,29 @@ function routeClusters(array $parts, string $method): void {
 
 // ─── /api/universities ─────────────────────────────────────────
 function routeUniversities(array $parts, string $method): void {
-    $id = isset($parts[1]) && is_numeric($parts[1]) ? (int)$parts[1] : null;
+    $id   = isset($parts[1]) && is_numeric($parts[1]) ? (int)$parts[1] : null;
+    $sub2 = $parts[2] ?? '';
+    // ── /api/universities/:id/zones — manage university-zone links (admin only) ──
+    if ($id && $sub2 === 'zones') {
+        requireAdmin();
+        if ($method === 'GET') {
+            ok(q('SELECT uz.zone_id, z.code, z.name FROM university_zones uz JOIN zones z ON z.id=uz.zone_id WHERE uz.university_id=?', [$id]));
+        }
+        if ($method === 'POST') {
+            $b = body();
+            $zid = (int)($b['zone_id'] ?? 0);
+            if (!$zid) err(400, 'zone_id required.');
+            qn('INSERT IGNORE INTO university_zones (university_id,zone_id) VALUES (?,?)', [$id,$zid]);
+            ok(['linked'=>true]);
+        }
+        if ($method === 'DELETE') {
+            $zid3 = isset($parts[3]) ? (int)$parts[3] : (int)(body()['zone_id'] ?? 0);
+            if (!$zid3) err(400, 'zone_id required.');
+            qn('DELETE FROM university_zones WHERE university_id=? AND zone_id=?', [$id,$zid3]);
+            ok(['unlinked'=>true]);
+        }
+        err(405, 'Method not allowed.');
+    }
     if ($method === 'GET' && !$id) {
         ok(q("SELECT u.id,u.name,u.short_name,u.area,u.district,u.zone_id,u.cluster_id,
                      u.gps_lat,u.gps_lng,u.image_url,z.code AS zone_code,z.name AS zone_name,
@@ -459,10 +1045,15 @@ function routeProperties(array $parts, string $method): void {
                        p.verified,p.youtube_video_id,p.views_count,p.created_at,
                        p.nearest_university_id,u.name AS university_name,u.short_name AS university_short,
                        z.code AS zone_code,z.name AS zone_name,c.code AS cluster_code,c.name AS cluster_name,
-                       (SELECT url FROM property_photos ph WHERE ph.property_id=p.id AND ph.is_main=1 LIMIT 1) AS main_photo,
+                       COALESCE(
+                           (SELECT ph.url FROM property_photos ph WHERE ph.property_id=p.id ORDER BY ph.is_main DESC,ph.sort_order,ph.id LIMIT 1),
+                           (SELECT rp.url FROM room_photos rp JOIN rooms pr ON pr.id=rp.room_id WHERE pr.property_id=p.id ORDER BY rp.is_main DESC,rp.sort_order,rp.id LIMIT 1)
+                       ) AS main_photo,
                        MIN(r.monthly_price) AS price_from,
                        SUM(r.total_count - r.occupied_count) AS rooms_available,
-                       GROUP_CONCAT(DISTINCT pu_u.short_name ORDER BY pu_u.short_name SEPARATOR ', ') AS nearby_universities
+                       GROUP_CONCAT(DISTINCT pu_u.short_name ORDER BY pu_u.short_name SEPARATOR ', ') AS nearby_universities,
+                       (SELECT ROUND(AVG(rv.rating),1) FROM property_reviews rv WHERE rv.property_id=p.id) AS avg_rating,
+                       (SELECT COUNT(*) FROM property_reviews rv WHERE rv.property_id=p.id) AS review_count
                 FROM properties p
                 JOIN universities u ON u.id=p.nearest_university_id
                 LEFT JOIN property_universities pu ON pu.property_id=p.id
@@ -492,7 +1083,27 @@ function routeProperties(array $parts, string $method): void {
             $sql .= ' AND p.id IN (SELECT property_id FROM rooms WHERE room_type=?)';
             $params[] = $_GET['room_type'];
         }
-        $sql .= ' GROUP BY p.id ORDER BY p.verified DESC, p.created_at DESC';
+        if (!empty($_GET['property_type'])) {
+            $sql .= ' AND p.property_type=?';
+            $params[] = $_GET['property_type'];
+        }
+        if (!empty($_GET['furnished']) && $_GET['furnished'] === 'true') {
+            $sql .= ' AND p.id IN (SELECT property_id FROM rooms WHERE furnished=1)';
+        }
+        if (!empty($_GET['bathroom_type'])) {
+            $sql .= ' AND p.id IN (SELECT property_id FROM rooms WHERE bathroom_type=?)';
+            $params[] = $_GET['bathroom_type'];
+        }
+        $sql .= ' GROUP BY p.id';
+        $sort = $_GET['sort'] ?? '';
+        if ($sort === 'price_asc')  $sql .= ' ORDER BY MIN(r.monthly_price) ASC';
+        elseif ($sort === 'price_desc') $sql .= ' ORDER BY MIN(r.monthly_price) DESC';
+        elseif ($sort === 'newest')     $sql .= ' ORDER BY p.created_at DESC';
+        elseif ($sort === 'verified')   $sql .= ' ORDER BY p.verified DESC, p.created_at DESC';
+        else                            $sql .= ' ORDER BY p.verified DESC, p.created_at DESC';
+        $limit = !empty($_GET['limit']) ? min((int)$_GET['limit'], 100) : 60;
+        $sql  .= ' LIMIT ' . $limit;
+        if (!empty($_GET['offset'])) $sql .= ' OFFSET ' . max(0, (int)$_GET['offset']);
         ok(q($sql, $params));
     }
 
@@ -513,12 +1124,58 @@ function routeProperties(array $parts, string $method): void {
         unset($prop['owner_id'],$prop['rejection_note']);
         $photos    = q('SELECT * FROM property_photos WHERE property_id=? ORDER BY is_main DESC,sort_order', [$id]);
         $amenities = q('SELECT a.name,a.icon FROM amenities a JOIN property_amenities pa ON pa.amenity_id=a.id WHERE pa.property_id=?', [$id]);
-        $rooms     = q('SELECT id,room_type,monthly_price,deposit,capacity,total_count,occupied_count,
-                               (total_count-occupied_count) AS available_count,floor,furnished,bathroom_type,description
-                        FROM rooms WHERE property_id=? ORDER BY monthly_price', [$id]);
+        $ACTIVE = "'payment_confirmed','student_confirmed','active','checked_in'";
+        $rooms = q("SELECT r.id, r.room_type, r.monthly_price, r.deposit, r.deposit_months,
+                           r.capacity, r.total_count, r.occupied_count,
+                           (r.total_count - r.occupied_count) AS available_count,
+                           r.floor, r.furnished, r.bathroom_type, r.description,
+                           COUNT(DISTINCT ru.id) AS listed_units,
+                           SUM(COALESCE(ru.capacity, r.capacity)) AS total_beds,
+                           GREATEST(0, SUM(COALESCE(ru.capacity, r.capacity)) - COUNT(b.id)) AS beds_available
+                    FROM rooms r
+                    LEFT JOIN room_units ru ON ru.room_type_id=r.id AND ru.property_id=r.property_id AND ru.is_active=1
+                    LEFT JOIN bookings b ON b.room_unit_id=ru.id AND b.status IN ($ACTIVE)
+                    WHERE r.property_id=?
+                    GROUP BY r.id
+                    ORDER BY r.monthly_price", [$id]);
+        foreach ($rooms as &$rm) {
+            $rm['photos'] = q('SELECT id,url FROM room_photos WHERE room_id=? ORDER BY sort_order', [$rm['id']]);
+        } unset($rm);
         $verif     = q1('SELECT * FROM verification_records WHERE property_id=?', [$id]);
+        $avgRating = q1('SELECT ROUND(AVG(rating),1) AS avg_rating, COUNT(*) AS review_count FROM property_reviews WHERE property_id=?', [$id]);
+        $reviews   = q('SELECT rv.id,rv.rating,rv.comment,rv.created_at,u.name AS student_name
+                        FROM property_reviews rv JOIN users u ON u.id=rv.student_id
+                        WHERE rv.property_id=? ORDER BY rv.created_at DESC LIMIT 20', [$id]);
         qn('UPDATE properties SET views_count=views_count+1 WHERE id=?', [$id]);
-        ok(array_merge($prop,['photos'=>$photos,'amenities'=>$amenities,'rooms'=>$rooms,'verification'=>$verif]));
+        ok(array_merge($prop,['photos'=>$photos,'amenities'=>$amenities,'rooms'=>$rooms,'verification'=>$verif,
+            'avg_rating'=>$avgRating['avg_rating'],'review_count'=>(int)$avgRating['review_count'],'reviews'=>$reviews]));
+    }
+
+    // GET /api/properties/:id/reviews — paginated reviews
+    if ($method === 'GET' && $id && $sub === 'reviews') {
+        $offset = max(0,(int)($_GET['offset']??0));
+        $rows = q('SELECT rv.id,rv.rating,rv.comment,rv.created_at,u.name AS student_name
+                   FROM property_reviews rv JOIN users u ON u.id=rv.student_id
+                   WHERE rv.property_id=? ORDER BY rv.created_at DESC LIMIT 20 OFFSET '.$offset, [$id]);
+        ok($rows);
+    }
+
+    // POST /api/properties/:id/reviews — student submits a review
+    if ($method === 'POST' && $id && $sub === 'reviews') {
+        $u = requireStudent();
+        $b = body();
+        $rating = (int)($b['rating']??0);
+        if ($rating < 1 || $rating > 5) err(400,'Rating must be 1–5.');
+        $booking = q1("SELECT id FROM bookings WHERE student_id=? AND property_id=? AND status IN ('move_in_completed','move_out_completed') LIMIT 1",
+                      [$u['id'],$id]);
+        if (!$booking) err(403,'You must have lived in this property to leave a review.');
+        $existing = q1('SELECT id FROM property_reviews WHERE booking_id=?',[$booking['id']]);
+        if ($existing) err(409,'You have already reviewed this property.');
+        $rid = qx('INSERT INTO property_reviews (property_id,student_id,booking_id,rating,comment) VALUES (?,?,?,?,?)',
+                  [$id,$u['id'],$booking['id'],$rating,$b['comment']??null]);
+        $row = q1('SELECT rv.id,rv.rating,rv.comment,rv.created_at,u.name AS student_name
+                   FROM property_reviews rv JOIN users u ON u.id=rv.student_id WHERE rv.id=?',[$rid]);
+        created($row);
     }
 
     // POST /api/properties/:id/save  — student saves a property
@@ -573,7 +1230,10 @@ function routePortal(array $parts, string $method): void {
                      p.nearest_university_id,u.name AS university_name,
                      z.code AS zone_code,z.name AS zone_name,
                      ow.name AS owner_name,
-                     (SELECT url FROM property_photos ph WHERE ph.property_id=p.id AND ph.is_main=1 LIMIT 1) AS main_photo,
+                     COALESCE(
+                           (SELECT ph.url FROM property_photos ph WHERE ph.property_id=p.id ORDER BY ph.is_main DESC,ph.sort_order,ph.id LIMIT 1),
+                           (SELECT rp.url FROM room_photos rp JOIN rooms pr ON pr.id=rp.room_id WHERE pr.property_id=p.id ORDER BY rp.is_main DESC,rp.sort_order,rp.id LIMIT 1)
+                       ) AS main_photo,
                      COUNT(DISTINCT r.id) AS room_types,
                      SUM(r.total_count) AS total_rooms,
                      SUM(r.occupied_count) AS occupied_rooms,
@@ -589,22 +1249,48 @@ function routePortal(array $parts, string $method): void {
 
     // ── POST /api/portal/properties  — register a new property ─
     if ($method === 'POST' && $sub === 'properties' && !$sub2) {
-        if ($u['role'] !== 'property_owner') err(403, 'Only property owners can register properties.');
+        // Both property_owner and property_manager can list
         foreach (['name','property_type','nearest_university_id','area','address','description'] as $f)
             if (empty($b[$f])) err(400, "Field '$f' is required.");
+        $nearUniId = (int)$b['nearest_university_id'];
+        $uni = q1('SELECT zone_id,cluster_id FROM universities WHERE id=?', [$nearUniId]);
+        // Auto-assign zone_id from coverage (ward → district → region precedence)
+        $autoZoneId = null;
+        if (!empty($b['ward'])) {
+            $r = q1("SELECT zone_id FROM zone_coverage WHERE coverage_type='ward' AND coverage_value=? LIMIT 1", [$b['ward']]);
+            if ($r) $autoZoneId = $r['zone_id'];
+        }
+        if (!$autoZoneId && !empty($b['district'])) {
+            $r = q1("SELECT zone_id FROM zone_coverage WHERE coverage_type='district' AND coverage_value=? LIMIT 1", [$b['district']]);
+            if ($r) $autoZoneId = $r['zone_id'];
+        }
+        if (!$autoZoneId && !empty($b['region'])) {
+            $r = q1("SELECT zone_id FROM zone_coverage WHERE coverage_type='region' AND coverage_value=? LIMIT 1", [$b['region']]);
+            if ($r) $autoZoneId = $r['zone_id'];
+        }
+        $resolvedZoneId = $autoZoneId ?? ($b['zone_id'] ?? ($uni['zone_id'] ?? null));
         $pdo = db();
         $pdo->beginTransaction();
         try {
             $pid = qx(
-                "INSERT INTO properties (owner_id,name,property_type,nearest_university_id,zone_id,cluster_id,
-                                         area,address,distance_km,transport_options,description,
-                                         youtube_video_id,total_floors,status)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending')",
-                [$u['id'],$b['name'],$b['property_type'],$b['nearest_university_id'],
-                 $b['zone_id']??null,$b['cluster_id']??null,$b['area'],$b['address'],
-                 $b['distance_km']??null,$b['transport_options']??null,$b['description'],
-                 $b['youtube_video_id']??null,$b['total_floors']??null]
+                "INSERT INTO properties (owner_id,name,property_type,nearest_university_id,university_id,
+                                         zone_id,cluster_id,region,district,ward,area,address,distance_km,transport_options,
+                                         description,youtube_video_id,total_floors,status,
+                                         views_count,rejection_note,created_by,created_by_role)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',0,NULL,?,?)",
+                [$u['id'],$b['name'],$b['property_type'],$nearUniId,$nearUniId,
+                 $resolvedZoneId,$uni['cluster_id']??null,
+                 $b['region']??null,$b['district']??null,$b['ward']??null,
+                 $b['area'],$b['address'],$b['distance_km']??null,$b['transport_options']??null,
+                 $b['description'],$b['youtube_video_id']??null,$b['total_floors']??null,
+                 (int)$u['id'],$u['role']]
             );
+            // Save university eligibility (multi-university select)
+            $portalUniIds = array_filter(array_map('intval', (array)($b['university_ids'] ?? [$nearUniId])));
+            if (!in_array($nearUniId, $portalUniIds)) $portalUniIds[] = $nearUniId;
+            foreach ($portalUniIds as $puid) {
+                if ($puid > 0) qn('INSERT IGNORE INTO property_universities (property_id,university_id) VALUES (?,?)', [$pid,$puid]);
+            }
             if (!empty($b['amenity_ids']) && is_array($b['amenity_ids'])) {
                 foreach ($b['amenity_ids'] as $aid)
                     qx('INSERT INTO property_amenities (property_id,amenity_id) VALUES (?,?)', [$pid,(int)$aid]);
@@ -620,7 +1306,7 @@ function routePortal(array $parts, string $method): void {
                         $rm['bathroom_type']??'Shared',$rm['description']??null]);
             }
             $pdo->commit();
-            created(['message'=>'Property submitted for admin review.','propertyId'=>$pid]);
+            created(['message'=>'Property is now live! Contact Geto Student to schedule a verification visit and earn the verified badge.','propertyId'=>$pid]);
         } catch (Exception $e) { $pdo->rollBack(); err(500, 'Failed to register property: '.$e->getMessage()); }
     }
 
@@ -638,6 +1324,10 @@ function routePortal(array $parts, string $method): void {
         $photos    = q('SELECT * FROM property_photos WHERE property_id=? ORDER BY is_main DESC,sort_order', [$pid]);
         $amenities = q('SELECT a.id,a.name,a.icon FROM amenities a JOIN property_amenities pa ON pa.amenity_id=a.id WHERE pa.property_id=?', [$pid]);
         $rooms     = q('SELECT *,(total_count-occupied_count) AS available_count FROM rooms WHERE property_id=? ORDER BY monthly_price', [$pid]);
+        foreach ($rooms as &$rm) {
+            $rm['photos'] = q('SELECT id,url,is_main,sort_order FROM room_photos WHERE room_id=? ORDER BY is_main DESC,sort_order', [$rm['id']]);
+            $rm['videos'] = q('SELECT id,youtube_video_id,title FROM room_videos WHERE room_id=?', [$rm['id']]);
+        } unset($rm);
         $tenants   = q("SELECT t.*,r.room_type FROM tenants t JOIN rooms r ON r.id=t.room_id WHERE t.property_id=? AND t.status='active' ORDER BY t.name", [$pid]);
         $manager   = q1("SELECT u.id,u.name,u.email,u.phone FROM property_manager_assignments pma JOIN users u ON u.id=pma.manager_id WHERE pma.property_id=? AND pma.is_active=1", [$pid]);
         ok(array_merge($prop,['photos'=>$photos,'amenities'=>$amenities,'rooms'=>$rooms,'tenants'=>$tenants,'manager'=>$manager]));
@@ -647,7 +1337,7 @@ function routePortal(array $parts, string $method): void {
     if ($method === 'PUT' && $sub === 'properties' && is_numeric($sub2)) {
         $pid = (int)$sub2;
         if (!canAccessProperty($u, $pid)) err(403, 'Access denied.');
-        $allowed = ['name','description','area','address','distance_km','transport_options',
+        $allowed = ['name','description','region','district','ward','area','address','distance_km','transport_options',
                     'youtube_video_id','zone_id','cluster_id','total_floors'];
         $fields = []; $params = [];
         foreach ($allowed as $f) if (isset($b[$f])) { $fields[] = "$f=?"; $params[] = $b[$f]; }
@@ -674,11 +1364,51 @@ function routePortal(array $parts, string $method): void {
         ok(['deleted'=>true]);
     }
 
+    // ── POST /api/portal/rooms/:id/photos — upload room-type photos ──
+    if ($method === 'POST' && $sub === 'rooms' && is_numeric($sub2) && $sub3 === 'photos') {
+        $rid = (int)$sub2;
+        $room = q1('SELECT property_id FROM rooms WHERE id=?', [$rid]);
+        if (!$room || !canAccessProperty($u, (int)$room['property_id'])) err(403, 'Access denied.');
+        if (empty($_FILES['photos'])) err(400, 'No photos uploaded.');
+        $docroot = rtrim($_SERVER['DOCUMENT_ROOT'], '/');
+        $dir = "$docroot/uploads/rooms/$rid";
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+        $files = $_FILES['photos'];
+        if (!is_array($files['name'])) $files = array_map(fn($v) => [$v], $files);
+        $count = count($files['name']); $saved = [];
+        $maxB  = MAX_FILE_MB * 1024 * 1024;
+        for ($i = 0; $i < $count; $i++) {
+            if ($files['error'][$i] !== UPLOAD_ERR_OK) continue;
+            if ($files['size'][$i] > $maxB || !str_starts_with($files['type'][$i], 'image/')) continue;
+            $name = preg_replace('/\.[^.]+$/', '', basename($files['name'][$i])).'_'.time().$i.'.webp';
+            $dest = "$dir/$name";
+            try { toWebP($files['tmp_name'][$i], $dest); }
+            catch (Exception) { move_uploaded_file($files['tmp_name'][$i], $dest); }
+            $isMain = empty(q('SELECT id FROM room_photos WHERE room_id=?', [$rid])) ? 1 : 0;
+            $ord = count($saved);
+            qx('INSERT INTO room_photos (room_id,url,is_main,sort_order) VALUES (?,?,?,?)',
+               [$rid, "/uploads/rooms/$rid/$name", $isMain, $ord]);
+            $saved[] = "/uploads/rooms/$rid/$name";
+        }
+        ok(['uploaded'=>count($saved),'photos'=>$saved]);
+    }
+
+    // ── DELETE /api/portal/room-photos/:id ───────────────────
+    if ($method === 'DELETE' && $sub === 'room-photos' && is_numeric($sub2)) {
+        $phid = (int)$sub2;
+        $ph = q1('SELECT rp.url, r.property_id FROM room_photos rp JOIN rooms r ON r.id=rp.room_id WHERE rp.id=?', [$phid]);
+        if (!$ph || !canAccessProperty($u, (int)$ph['property_id'])) err(403, 'Access denied.');
+        $docroot = rtrim($_SERVER['DOCUMENT_ROOT'], '/');
+        @unlink($docroot.$ph['url']);
+        qn('DELETE FROM room_photos WHERE id=?', [$phid]);
+        ok(['deleted'=>true]);
+    }
+
     // ── GET /api/portal/rooms/:property_id ───────────────────
     if ($method === 'GET' && $sub === 'rooms' && is_numeric($sub2)) {
         $pid = (int)$sub2;
         if (!canAccessProperty($u, $pid)) err(403, 'Access denied.');
-        ok(q('SELECT *,(total_count-occupied_count) AS available_count FROM rooms WHERE property_id=? ORDER BY monthly_price', [$pid]));
+        ok(q('SELECT id,room_type,monthly_price,deposit,deposit_months,capacity,total_count,occupied_count,(total_count-occupied_count) AS available_count,floor,furnished,bathroom_type,description FROM rooms WHERE property_id=? ORDER BY monthly_price', [$pid]));
     }
 
     // ── POST /api/portal/rooms  — add room category ──────────
@@ -701,7 +1431,7 @@ function routePortal(array $parts, string $method): void {
         $rid = (int)$sub2;
         $room = q1('SELECT property_id FROM rooms WHERE id=?', [$rid]);
         if (!$room || !canAccessProperty($u, (int)$room['property_id'])) err(403, 'Access denied.');
-        $allowed = ['room_type','monthly_price','deposit','capacity','total_count','occupied_count',
+        $allowed = ['room_type','monthly_price','deposit','deposit_months','capacity','total_count','occupied_count',
                     'floor','furnished','bathroom_type','description'];
         $fields = []; $params = [];
         foreach ($allowed as $f) if (isset($b[$f])) { $fields[] = "$f=?"; $params[] = $b[$f]; }
@@ -766,29 +1496,26 @@ function routePortal(array $parts, string $method): void {
         ok(['updated'=>true]);
     }
 
-    // ── GET /api/portal/bookings ──────────────────────────────
+    // ── GET /api/portal/bookings — owners/managers see counts only, never student details ──
     if ($method === 'GET' && $sub === 'bookings') {
         [$clause, $params] = [$scope['clause'], $scope['params']];
-        ok(q("SELECT b.id,b.move_in_date,b.status,b.move_in_notes,b.admin_notes,b.created_at,
-                     p.name AS property_name,p.area,r.room_type,r.monthly_price,
-                     s.name AS student_name,s.phone AS student_phone,s.email AS student_email
-              FROM bookings b
-              JOIN properties p ON p.id=b.property_id
-              JOIN rooms r ON r.id=b.room_id
-              JOIN users s ON s.id=b.student_id
-              WHERE $clause
-              ORDER BY b.created_at DESC", $params));
-    }
-
-    // ── PUT /api/portal/bookings/:id/status ──────────────────
-    if ($method === 'PUT' && $sub === 'bookings' && is_numeric($sub2) && $sub3 === 'status') {
-        $bid = (int)$sub2;
-        $booking = q1('SELECT owner_id,property_id FROM bookings WHERE id=?', [$bid]);
-        if (!$booking || !canAccessProperty($u, (int)$booking['property_id'])) err(403, 'Access denied.');
-        $valid = ['accepted','rejected','payment_pending','confirmed','move_in_completed','cancelled'];
-        if (!in_array($b['status']??'', $valid)) err(400, 'Invalid status.');
-        qn('UPDATE bookings SET status=?,admin_notes=? WHERE id=?', [$b['status'],$b['note']??null,$bid]);
-        ok(['updated'=>true]);
+        $data = q("SELECT p.id AS property_id, p.name AS property_name, p.area,
+                          r.id AS room_id, r.room_type, r.monthly_price,
+                          r.total_count, r.capacity,
+                          (r.total_count * GREATEST(1,r.capacity)) AS total_slots,
+                          COUNT(b.id) AS total_bookings,
+                          SUM(b.status='pending') AS pending,
+                          SUM(b.status IN ('assigned','accepted','payment_pending')) AS in_progress,
+                          SUM(b.status IN ('payment_confirmed','student_confirmed')) AS awaiting_confirm,
+                          SUM(b.status IN ('active','confirmed','checked_in','move_in_completed')) AS active_tenants,
+                          SUM(b.status IN ('rejected','cancelled','checked_out','move_out_completed')) AS closed
+                   FROM properties p
+                   JOIN rooms r ON r.property_id=p.id
+                   LEFT JOIN bookings b ON b.room_id=r.id
+                   WHERE $clause
+                   GROUP BY p.id, r.id
+                   ORDER BY p.name, r.monthly_price", $params);
+        ok($data);
     }
 
     // ── GET /api/portal/viewings ──────────────────────────────
@@ -815,6 +1542,199 @@ function routePortal(array $parts, string $method): void {
         ok(['referral_code'=>$myCode['referral_code']??null,'stats'=>$stats,'referrals'=>$ref]);
     }
 
+    // ── GET /api/portal/properties/:id/room-units — owner/manager sees counts, no tenant names ──
+    if ($method === 'GET' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'room-units' && !$sub4) {
+        $pid = (int)$sub2;
+        if (!canAccessProperty($u, $pid)) err(403, 'Access denied.');
+        $ACTIVE = "'payment_confirmed','student_confirmed','active','checked_in'";
+        $units = q("SELECT ru.id, ru.unit_number, ru.floor, ru.status, ru.is_active,
+                           ru.capacity AS unit_capacity, ru.created_at,
+                           r.id AS room_type_id, r.room_type, r.monthly_price,
+                           r.capacity AS room_capacity,
+                           COALESCE(ru.capacity, r.capacity) AS effective_capacity,
+                           COUNT(b.id) AS occupied_count,
+                           GREATEST(0, COALESCE(ru.capacity, r.capacity) - COUNT(b.id)) AS available_slots
+                    FROM room_units ru
+                    JOIN rooms r ON r.id = ru.room_type_id
+                    LEFT JOIN bookings b ON b.room_unit_id = ru.id AND b.status IN ($ACTIVE)
+                    WHERE ru.property_id=? AND ru.is_active=1
+                    GROUP BY ru.id, r.id
+                    ORDER BY ru.floor, CAST(REGEXP_REPLACE(ru.unit_number,'[^0-9]','') AS UNSIGNED), ru.unit_number",
+                   [$pid]);
+        ok($units);
+    }
+
+    // ── POST /api/portal/properties/:id/room-units — add single unit ──
+    if ($method === 'POST' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'room-units' && !$sub4) {
+        $pid = (int)$sub2;
+        if (!canAccessProperty($u, $pid)) err(403, 'Access denied.');
+        if (empty($b['unit_number']) || empty($b['room_type_id'])) err(400, 'unit_number and room_type_id required.');
+        $exists = q1('SELECT id FROM room_units WHERE property_id=? AND unit_number=?', [$pid, trim($b['unit_number'])]);
+        if ($exists) err(409, 'Unit number already exists.');
+        $cap = isset($b['capacity']) && $b['capacity'] !== '' ? (int)$b['capacity'] : null;
+        $uid2 = qx('INSERT INTO room_units (property_id,room_type_id,unit_number,floor,status,capacity) VALUES (?,?,?,?,?,?)',
+            [$pid,(int)$b['room_type_id'],trim($b['unit_number']),(int)($b['floor']??1),$b['status']??'available',$cap]);
+        ok(['id'=>$uid2,'unit_number'=>trim($b['unit_number'])]);
+    }
+
+    // ── POST /api/portal/properties/:id/room-units/named ──
+    if ($method === 'POST' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'room-units' && $sub4 === 'named') {
+        $pid = (int)$sub2;
+        if (!canAccessProperty($u, $pid)) err(403, 'Access denied.');
+        if (empty($b['room_type_id']) || empty($b['units']) || !is_array($b['units'])) err(400, 'room_type_id and units[] required.');
+        $rtid = (int)$b['room_type_id'];
+        $floor = max(1,(int)($b['floor']??1));
+        $cap = isset($b['capacity']) && $b['capacity'] !== '' ? (int)$b['capacity'] : null;
+        $created = 0; $skipped = 0;
+        foreach ($b['units'] as $un) {
+            $un = trim((string)$un);
+            if ($un === '') continue;
+            if (q1('SELECT id FROM room_units WHERE property_id=? AND unit_number=?',[$pid,$un])) { $skipped++; continue; }
+            qx('INSERT INTO room_units (property_id,room_type_id,unit_number,floor,capacity) VALUES (?,?,?,?,?)',[$pid,$rtid,$un,$floor,$cap]);
+            $created++;
+        }
+        ok(['created'=>$created,'skipped'=>$skipped]);
+    }
+
+    // ── POST /api/portal/properties/:id/room-units/bulk ──
+    if ($method === 'POST' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'room-units' && $sub4 === 'bulk') {
+        $pid = (int)$sub2;
+        if (!canAccessProperty($u, $pid)) err(403, 'Access denied.');
+        if (empty($b['room_type_id']) || empty($b['floors']) || empty($b['units_per_floor'])) err(400,'room_type_id, floors, units_per_floor required.');
+        $rtid = (int)$b['room_type_id'];
+        $floors = max(1,min(20,(int)$b['floors']));
+        $upf = max(1,min(50,(int)$b['units_per_floor']));
+        $prefix = strtoupper(trim($b['prefix']??''));
+        $startNum = max(1,(int)($b['start_number']??1));
+        $cap = isset($b['capacity']) && $b['capacity'] !== '' ? (int)$b['capacity'] : null;
+        $created = 0; $skipped = 0;
+        for ($fl=1;$fl<=$floors;$fl++) {
+            for ($n=$startNum;$n<$startNum+$upf;$n++) {
+                $unitNum = $prefix ? $prefix.str_pad($fl,1,'0',STR_PAD_LEFT).str_pad($n,2,'0',STR_PAD_LEFT)
+                                   : $fl.str_pad($n,2,'0',STR_PAD_LEFT);
+                if (q1('SELECT id FROM room_units WHERE property_id=? AND unit_number=?',[$pid,$unitNum])) { $skipped++; continue; }
+                qx('INSERT INTO room_units (property_id,room_type_id,unit_number,floor,capacity) VALUES (?,?,?,?,?)',[$pid,$rtid,$unitNum,$fl,$cap]);
+                $created++;
+            }
+        }
+        ok(['created'=>$created,'skipped'=>$skipped]);
+    }
+
+    // ── PUT /api/portal/room-units/:id ──
+    if ($method === 'PUT' && $sub === 'room-units' && is_numeric($sub2)) {
+        $ruid = (int)$sub2;
+        $ru = q1('SELECT property_id FROM room_units WHERE id=?', [$ruid]);
+        if (!$ru || !canAccessProperty($u, (int)$ru['property_id'])) err(403,'Access denied.');
+        $fields = []; $params = [];
+        foreach (['status','floor','capacity'] as $f) {
+            if (array_key_exists($f,$b)) {
+                $fields[] = "$f=?";
+                $params[] = ($f==='capacity' && ($b[$f]==='' || $b[$f]===null)) ? null : $b[$f];
+            }
+        }
+        if (!$fields) err(400,'Nothing to update.');
+        $params[] = $ruid;
+        qn('UPDATE room_units SET '.implode(',',$fields).' WHERE id=?', $params);
+        ok(['updated'=>true]);
+    }
+
+    // ── DELETE /api/portal/room-units/:id ──
+    if ($method === 'DELETE' && $sub === 'room-units' && is_numeric($sub2)) {
+        $ruid = (int)$sub2;
+        $ru = q1('SELECT property_id FROM room_units WHERE id=?', [$ruid]);
+        if (!$ru || !canAccessProperty($u, (int)$ru['property_id'])) err(403,'Access denied.');
+        $occ = q1("SELECT id FROM bookings WHERE room_unit_id=?
+                   AND status IN ('payment_confirmed','student_confirmed','active','checked_in')", [$ruid]);
+        if ($occ) err(409,'Cannot remove a unit with an active tenant.');
+        qn('UPDATE room_units SET is_active=0 WHERE id=?', [$ruid]);
+        ok(['deleted'=>true]);
+    }
+
+    // ── GET /api/portal/properties/:id/analytics ──
+    if ($method === 'GET' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'analytics') {
+        $pid = (int)$sub2;
+        if (!canAccessProperty($u, $pid)) err(403,'Access denied.');
+        $ACTIVE = "'payment_confirmed','student_confirmed','active','checked_in'";
+        $byType = q("SELECT r.id AS room_type_id, r.room_type, r.capacity AS default_capacity,
+                            COUNT(DISTINCT ru.id) AS unit_count,
+                            SUM(COALESCE(ru.capacity, r.capacity)) AS total_beds,
+                            SUM(sub.occ) AS occupied_beds,
+                            SUM(GREATEST(0, COALESCE(ru.capacity, r.capacity) - sub.occ)) AS available_beds,
+                            SUM(CASE WHEN sub.occ >= COALESCE(ru.capacity, r.capacity) THEN 1 ELSE 0 END) AS full_units,
+                            SUM(CASE WHEN sub.occ > 0 AND sub.occ < COALESCE(ru.capacity, r.capacity) THEN 1 ELSE 0 END) AS partial_units,
+                            SUM(CASE WHEN sub.occ = 0 THEN 1 ELSE 0 END) AS empty_units
+                     FROM rooms r
+                     JOIN room_units ru ON ru.room_type_id=r.id AND ru.property_id=? AND ru.is_active=1
+                     LEFT JOIN (
+                         SELECT room_unit_id, COUNT(*) AS occ
+                         FROM bookings WHERE status IN ($ACTIVE) AND room_unit_id IS NOT NULL
+                         GROUP BY room_unit_id
+                     ) sub ON sub.room_unit_id=ru.id
+                     WHERE r.property_id=?
+                     GROUP BY r.id ORDER BY r.monthly_price", [$pid,$pid]);
+        $totals = ['total_beds'=>0,'occupied_beds'=>0,'available_beds'=>0,'total_units'=>0];
+        foreach ($byType as $row) {
+            $totals['total_beds']    += (int)$row['total_beds'];
+            $totals['occupied_beds'] += (int)$row['occupied_beds'];
+            $totals['available_beds']+= (int)$row['available_beds'];
+            $totals['total_units']   += (int)$row['unit_count'];
+        }
+        ok(['totals'=>$totals,'by_room_type'=>$byType]);
+    }
+
+    // ── GET /api/portal/payout-profile ───────────────────────────
+    if ($method === 'GET' && $sub === 'payout-profile') {
+        $profile = q1('SELECT * FROM owner_payout_profiles WHERE owner_id=?',[(int)$u['id']]);
+        ok($profile ?: null);
+    }
+
+    // ── POST /api/portal/payout-profile — create or update ───────
+    if ($method === 'POST' && $sub === 'payout-profile') {
+        $type       = $b['payout_type']??'mobile_money';
+        $autoEnable = !empty($b['auto_payout_enabled']) ? 1 : 0;
+        if (!in_array($type,['mobile_money','bank'])) err(400,'Invalid payout_type.');
+        // Require explicit consent when enabling auto-payout
+        if ($autoEnable && empty($b['auto_payout_consent'])) err(400,'Consent required to enable automatic payout.');
+        $consentSql  = $autoEnable ? ',auto_payout_enabled=1,auto_payout_consented_at=NOW()' : ',auto_payout_enabled=0,auto_payout_consented_at=NULL';
+        $existing = q1('SELECT id FROM owner_payout_profiles WHERE owner_id=?',[(int)$u['id']]);
+        if ($type==='mobile_money') {
+            if (empty($b['phone'])||empty($b['provider'])) err(400,'phone and provider required for mobile_money.');
+            $phone = normalizePhone($b['phone']);
+            if ($existing) {
+                qn("UPDATE owner_payout_profiles SET payout_type=?,provider=?,phone=?,account_name=NULL,account_number=NULL,bank_name=NULL$consentSql WHERE owner_id=?",
+                   [$type,$b['provider'],$phone,(int)$u['id']]);
+            } else {
+                qx('INSERT INTO owner_payout_profiles (owner_id,payout_type,provider,phone,auto_payout_enabled,auto_payout_consented_at) VALUES (?,?,?,?,?,?)',
+                   [(int)$u['id'],$type,$b['provider'],$phone,$autoEnable,$autoEnable?date('Y-m-d H:i:s'):null]);
+            }
+        } else {
+            if (empty($b['bank_name'])||empty($b['account_number'])||empty($b['account_name']))
+                err(400,'bank_name, account_number, account_name required for bank.');
+            if ($existing) {
+                qn("UPDATE owner_payout_profiles SET payout_type=?,bank_name=?,account_number=?,account_name=?,provider=NULL,phone=NULL$consentSql WHERE owner_id=?",
+                   [$type,$b['bank_name'],$b['account_number'],$b['account_name'],(int)$u['id']]);
+            } else {
+                qx('INSERT INTO owner_payout_profiles (owner_id,payout_type,bank_name,account_number,account_name,auto_payout_enabled,auto_payout_consented_at) VALUES (?,?,?,?,?,?,?)',
+                   [(int)$u['id'],$type,$b['bank_name'],$b['account_number'],$b['account_name'],$autoEnable,$autoEnable?date('Y-m-d H:i:s'):null]);
+            }
+        }
+        ok(['saved'=>true]);
+    }
+
+    // ── GET /api/portal/payments — owner's payment transaction history ──
+    if ($method === 'GET' && $sub === 'payments') {
+        $scope = propertyScope($u);
+        $txns = q("SELECT pt.*,p.name AS property_name,r.room_type,
+                          s.name AS student_name,s.phone AS student_phone
+                   FROM payment_transactions pt
+                   JOIN properties p ON p.id=pt.property_id
+                   JOIN rooms r ON r.id=pt.room_id
+                   JOIN users s ON s.id=pt.student_id
+                   WHERE pt.owner_id=?
+                   ORDER BY pt.created_at DESC LIMIT 50",[(int)$u['id']]);
+        ok($txns);
+    }
+
     err(404, 'Portal route not found.');
 }
 
@@ -829,14 +1749,39 @@ function routeStudent(array $parts, string $method): void {
     // GET /api/student/bookings
     if ($method === 'GET' && $sub === 'bookings') {
         ok(q("SELECT b.id,b.move_in_date,b.status,b.move_in_notes,b.created_at,
+                     b.qr_token,b.amount_paid,b.contract_start,b.contract_end,
+                     b.room_unit_id,b.assigned_at,b.payment_note,b.student_confirmed_at,
+                     b.payment_confirmed_at,b.payment_receipt_ref,b.booked_by_staff_role,
                      p.id AS property_id,p.name AS property_name,p.area,p.verified,
-                     r.room_type,r.monthly_price,
+                     p.property_type, p.address,
+                     r.room_type,r.monthly_price,r.deposit_months,r.bathroom_type,r.furnished,r.capacity,
+                     ru.unit_number, ru.floor AS unit_floor,
+                     gm.name AS assigned_gm_name, gm.phone AS assigned_gm_phone,
+                     COALESCE(opp.auto_payout_enabled,0) AS owner_auto_payout,
                      (SELECT url FROM property_photos ph WHERE ph.property_id=p.id AND ph.is_main=1 LIMIT 1) AS property_photo
               FROM bookings b
               JOIN properties p ON p.id=b.property_id
               JOIN rooms r ON r.id=b.room_id
+              LEFT JOIN room_units ru ON ru.id=b.room_unit_id
+              LEFT JOIN users gm ON gm.id=b.assigned_to
+              LEFT JOIN owner_payout_profiles opp ON opp.owner_id=p.owner_id
               WHERE b.student_id=?
               ORDER BY b.created_at DESC", [$u['id']]));
+    }
+
+    // POST /api/student/bookings/:id/confirm — student confirms staff-recorded payment → activates QR
+    if ($method === 'POST' && $sub === 'bookings' && is_numeric($sub2) && $sub3 === 'confirm') {
+        $bid = (int)$sub2;
+        $bk = q1('SELECT id,status,qr_token,amount_paid,contract_start,contract_end FROM bookings WHERE id=? AND student_id=?',
+                  [$bid,$u['id']]);
+        if (!$bk) err(404, 'Booking not found.');
+        if ($bk['status'] !== 'payment_confirmed')
+            err(400, 'Nothing to confirm yet — waiting for staff to record your payment.');
+        $qrToken = $bk['qr_token'] ?: bin2hex(random_bytes(32));
+        qn("UPDATE bookings SET status='active', student_confirmed_at=NOW(), qr_token=? WHERE id=?",
+           [$qrToken, $bid]);
+        ok(['confirmed'=>true,'qr_token'=>$qrToken,
+            'message'=>'Tenancy confirmed! Your QR check-in code is now active.']);
     }
 
     // POST /api/student/bookings  — student books a room
@@ -845,14 +1790,36 @@ function routeStudent(array $parts, string $method): void {
             if (empty($b[$f])) err(400, "$f required.");
         $prop = q1("SELECT owner_id FROM properties WHERE id=? AND status='approved'", [(int)$b['property_id']]);
         if (!$prop) err(404, 'Property not found or not available.');
-        $room = q1('SELECT id,total_count,occupied_count FROM rooms WHERE id=? AND property_id=?',
+        $room = q1('SELECT id, total_count, capacity, property_id FROM rooms WHERE id=? AND property_id=?',
                    [(int)$b['room_id'],(int)$b['property_id']]);
         if (!$room) err(404, 'Room not found.');
-        if ((int)$room['occupied_count'] >= (int)$room['total_count']) err(409, 'Hakuna nafasi iliyobaki katika chumba hiki.');
+        // Gate: only confirmed/active bookings count as occupied — pending requests never block new ones.
+        // If room_units are listed, use real bed-level availability; otherwise fall back to manual count.
+        $ACTIVE = "'payment_confirmed','student_confirmed','active','checked_in'";
+        $unitInfo = q1("SELECT COUNT(DISTINCT ru.id) AS unit_count,
+                               COALESCE(SUM(COALESCE(ru.capacity, r.capacity)), 0) AS total_beds
+                        FROM room_units ru JOIN rooms r ON r.id=ru.room_type_id
+                        WHERE ru.room_type_id=? AND ru.property_id=? AND ru.is_active=1",
+                       [(int)$room['id'], (int)$room['property_id']]);
+        if ((int)$unitInfo['unit_count'] > 0) {
+            $confirmedBeds = (int)(q1("SELECT COUNT(*) AS cnt FROM bookings bk
+                                       JOIN room_units ru ON ru.id=bk.room_unit_id
+                                       WHERE ru.room_type_id=? AND ru.property_id=? AND ru.is_active=1
+                                         AND bk.status IN ($ACTIVE)",
+                                      [(int)$room['id'], (int)$room['property_id']])['cnt'] ?? 0);
+            if ($confirmedBeds >= (int)$unitInfo['total_beds']) err(409, 'Hakuna nafasi iliyobaki katika chumba hiki.');
+        } else {
+            $confirmedBks = (int)(q1("SELECT COUNT(*) AS cnt FROM bookings WHERE room_id=? AND status IN ($ACTIVE)", [(int)$room['id']])['cnt'] ?? 0);
+            $totalSlots = (int)$room['total_count'] * max(1, (int)$room['capacity']);
+            if ($confirmedBks >= $totalSlots) err(409, 'Hakuna nafasi iliyobaki katika chumba hiki.');
+        }
+        // Prevent duplicate active booking at same property
+        $dup = q1("SELECT id FROM bookings WHERE student_id=? AND property_id=? AND status NOT IN ('rejected','cancelled','checked_out','move_out_completed')", [$u['id'],(int)$b['property_id']]);
+        if ($dup) err(409, 'You already have an active booking at this property.');
         $bid = qx("INSERT INTO bookings (student_id,property_id,room_id,owner_id,move_in_date,move_in_notes,status)
                    VALUES (?,?,?,?,?,?,'pending')",
                   [$u['id'],$b['property_id'],$b['room_id'],$prop['owner_id'],$b['move_in_date'],$b['notes']??null]);
-        created(['message'=>'Ombi la uhifadhi limetumwa.','bookingId'=>$bid]);
+        created(['message'=>'Booking request submitted successfully.','bookingId'=>$bid]);
     }
 
     // PUT /api/student/bookings/:id/cancel
@@ -863,6 +1830,16 @@ function routeStudent(array $parts, string $method): void {
         if (in_array($bk['status'],['confirmed','move_in_completed'])) err(400, 'Cannot cancel a confirmed booking.');
         qn("UPDATE bookings SET status='cancelled' WHERE id=?", [$bid]);
         ok(['cancelled'=>true]);
+    }
+
+    // GET /api/student/viewings
+    if ($method === 'GET' && $sub === 'viewings') {
+        ok(q("SELECT vr.id,vr.preferred_date,vr.preferred_time,vr.notes,vr.status,vr.created_at,
+                     p.name AS property_name,p.area
+              FROM viewing_requests vr
+              JOIN properties p ON p.id=vr.property_id
+              WHERE vr.student_id=?
+              ORDER BY vr.preferred_date DESC", [$u['id']]));
     }
 
     // POST /api/student/viewings
@@ -882,7 +1859,10 @@ function routeStudent(array $parts, string $method): void {
     if ($method === 'GET' && $sub === 'saved') {
         ok(q("SELECT p.id,p.name,p.property_type,p.area,p.verified,p.distance_km,
                      u.name AS university_name,
-                     (SELECT url FROM property_photos ph WHERE ph.property_id=p.id AND ph.is_main=1 LIMIT 1) AS main_photo,
+                     COALESCE(
+                           (SELECT ph.url FROM property_photos ph WHERE ph.property_id=p.id ORDER BY ph.is_main DESC,ph.sort_order,ph.id LIMIT 1),
+                           (SELECT rp.url FROM room_photos rp JOIN rooms pr ON pr.id=rp.room_id WHERE pr.property_id=p.id ORDER BY rp.is_main DESC,rp.sort_order,rp.id LIMIT 1)
+                       ) AS main_photo,
                      MIN(r.monthly_price) AS price_from,sp.saved_at
               FROM saved_properties sp
               JOIN properties p ON p.id=sp.property_id
@@ -890,6 +1870,32 @@ function routeStudent(array $parts, string $method): void {
               LEFT JOIN rooms r ON r.property_id=p.id
               WHERE sp.student_id=? AND p.status='approved'
               GROUP BY p.id ORDER BY sp.saved_at DESC", [$u['id']]));
+    }
+
+    // GET /api/student/room-assignment
+    if ($method === 'GET' && $sub === 'room-assignment') {
+        $row = q1("SELECT b.id AS booking_id, b.contract_start, b.contract_end, b.assigned_at,
+                          ru.id AS unit_id, ru.unit_number, ru.floor,
+                          r.room_type, r.monthly_price, r.bathroom_type, r.furnished,
+                          p.name AS property_name, p.address, p.area
+                   FROM bookings b
+                   JOIN room_units ru ON ru.id = b.room_unit_id
+                   JOIN rooms r       ON r.id  = b.room_id
+                   JOIN properties p  ON p.id  = b.property_id
+                   WHERE b.student_id=? AND b.status IN ('confirmed','move_in_completed')
+                     AND b.room_unit_id IS NOT NULL
+                   ORDER BY b.assigned_at DESC LIMIT 1", [$u['id']]);
+        ok($row ?: null);
+    }
+
+    // PUT /api/student/bookings/:id/request-moveout
+    if ($method === 'PUT' && $sub === 'bookings' && is_numeric($sub2) && $sub3 === 'request-moveout') {
+        $bid = (int)$sub2;
+        $bk = q1('SELECT id,status FROM bookings WHERE id=? AND student_id=?', [$bid,$u['id']]);
+        if (!$bk) err(404, 'Booking not found.');
+        if (!in_array($bk['status'],['confirmed','move_in_completed'])) err(400, 'Can only request move-out for an active booking.');
+        qn("UPDATE bookings SET status='move_out_requested' WHERE id=?", [$bid]);
+        ok(['requested'=>true]);
     }
 
     // GET /api/student/referrals
@@ -911,18 +1917,52 @@ function routeAdmin(array $parts, string $method): void {
     $sub  = $parts[1] ?? '';
     $sub2 = $parts[2] ?? '';
     $sub3 = $parts[3] ?? '';
+    $sub4 = $parts[4] ?? '';
     $b    = body();
     $u    = requireStaff();  // admin OR zone_manager
 
-    $isAdmin      = $u['role'] === 'admin';
-    $userZoneId   = $isAdmin ? null : (int)($u['zone_id'] ?? 0);
+    $isAdmin       = $u['role'] === 'admin';
+    $isZoneManager = $u['role'] === 'zone_manager';
+    $isGetoManager = in_array($u['role'], ['geto_manager', 'geto_officer']);
+    $isSeniorStaff = $isAdmin || $isZoneManager;
+    $userZoneId    = $isAdmin ? null : (int)($u['zone_id'] ?? 0);
 
-    // Helper: zone scope SQL fragment for properties
-    $zoneClause = $isAdmin ? '1=1' : 'p.zone_id = ?';
-    $zoneParams = $isAdmin ? [] : [$userZoneId];
+    // Helper: zone scope SQL fragment for properties (p alias).
+    // Matches by legacy zone_id OR by zone_coverage (region/district/ward) for new properties.
+    $covExists = "EXISTS(SELECT 1 FROM zone_coverage zc WHERE zc.zone_id=? AND ((zc.coverage_type='region' AND zc.coverage_value=p.region) OR (zc.coverage_type='district' AND zc.coverage_value=p.district) OR (zc.coverage_type='ward' AND zc.coverage_value=p.ward)))";
+    $zoneClause = $isAdmin ? '1=1' : "(p.zone_id=? OR $covExists)";
+    $zoneParams = $isAdmin ? [] : [$userZoneId, $userZoneId];
+
+    // Helper: booking scope for geto_managers (only their assigned bookings)
+    $bookingClause = $isAdmin ? '1=1' : ($isGetoManager ? 'b.assigned_to = ?' : 'p.zone_id = ?');
+    $bookingParams = $isAdmin ? [] : [$isGetoManager ? (int)$u['id'] : $userZoneId];
 
     // ── GET /api/admin/stats — System analytics ───────────────
     if ($method === 'GET' && $sub === 'stats') {
+        // Geto Officer: return only their own booking summary
+        if ($isGetoManager && !$isAdmin && !$isZoneManager) {
+            $uid = (int)$u['id'];
+            $bs = q1("SELECT
+                COUNT(*) AS total,
+                SUM(status='assigned')          AS assigned,
+                SUM(status='payment_pending')   AS payment_pending,
+                SUM(status='payment_confirmed') AS payment_confirmed,
+                SUM(status='active')            AS active,
+                SUM(status='checked_in')        AS checked_in,
+                SUM(status IN ('rejected','cancelled')) AS closed
+              FROM bookings WHERE assigned_to=?", [$uid]);
+            $recent = q("SELECT b.id,b.status,b.move_in_date,b.created_at,
+                                s.name AS student_name,s.phone AS student_phone,
+                                p.name AS property_name,p.area,r.room_type,r.monthly_price
+                         FROM bookings b
+                         JOIN users s ON s.id=b.student_id
+                         JOIN properties p ON p.id=b.property_id
+                         JOIN rooms r ON r.id=b.room_id
+                         WHERE b.assigned_to=? AND b.status NOT IN ('rejected','cancelled','checked_out')
+                         ORDER BY b.created_at DESC LIMIT 20", [$uid]);
+            ok(['officer_summary'=>$bs,'officer_bookings'=>$recent]);
+        }
+
         $byZone = [];
         if ($isAdmin) {
             $zones = q('SELECT * FROM zones WHERE active=1 ORDER BY code');
@@ -939,12 +1979,29 @@ function routeAdmin(array $parts, string $method): void {
             }
         } else {
             $zid = $userZoneId;
-            $ps = q1("SELECT COUNT(*) AS total,SUM(status='approved') AS approved,SUM(verified=1) AS verified
-                      FROM properties WHERE zone_id=?", [$zid]);
+            // Coverage-based scope: match by old zone_id OR by region/district/ward coverage
+            $zmCovFrag = "EXISTS(SELECT 1 FROM zone_coverage zc WHERE zc.zone_id=$zid AND ((zc.coverage_type='region' AND zc.coverage_value=p.region) OR (zc.coverage_type='district' AND zc.coverage_value=p.district) OR (zc.coverage_type='ward' AND zc.coverage_value=p.ward)))";
+            $zmScope = "(p.zone_id=$zid OR $zmCovFrag)";
+            $ps = q1("SELECT COUNT(*) AS total,SUM(status='approved') AS approved,SUM(verified=1) AS verified,
+                             SUM(status='pending') AS pending_properties
+                      FROM properties p WHERE $zmScope", []);
             $rs = q1("SELECT SUM(r.total_count) AS total_rooms, SUM(r.occupied_count) AS occupied
-                      FROM rooms r JOIN properties p ON p.id=r.property_id WHERE p.zone_id=?", [$zid]);
-            $bs = q1("SELECT COUNT(*) AS total_bookings FROM bookings b
-                      JOIN properties p ON p.id=b.property_id WHERE p.zone_id=?", [$zid]);
+                      FROM rooms r JOIN properties p ON p.id=r.property_id WHERE $zmScope", []);
+            $bs = q1("SELECT COUNT(*) AS total_bookings,
+                             SUM(b.status NOT IN ('rejected','cancelled','checked_out')) AS active_bookings,
+                             SUM(b.status='confirmed') AS confirmed_bookings
+                      FROM bookings b JOIN properties p ON p.id=b.property_id WHERE $zmScope", []);
+            $os = q1("SELECT COUNT(*) AS geto_officers FROM users WHERE zone_id=? AND role IN ('geto_officer','geto_manager')", [$zid]);
+            $officerStats = q("SELECT u.id,u.name,u.phone,
+                                      SUM(b.status NOT IN ('rejected','cancelled','checked_out')) AS active_bookings,
+                                      COUNT(b.id) AS total_bookings
+                               FROM users u
+                               LEFT JOIN bookings b ON b.assigned_to=u.id
+                               WHERE u.zone_id=? AND u.role IN ('geto_officer','geto_manager')
+                               GROUP BY u.id ORDER BY u.name", [$zid]);
+            $pendingProps = q("SELECT p.id,p.name,p.area,p.region,p.district,p.ward,p.created_at,ow.name AS owner_name
+                               FROM properties p LEFT JOIN users ow ON ow.id=p.owner_id
+                               WHERE $zmScope AND p.status='pending' ORDER BY p.created_at DESC LIMIT 10", []);
         }
 
         $global = $isAdmin ? q1("SELECT
@@ -952,6 +2009,7 @@ function routeAdmin(array $parts, string $method): void {
             (SELECT COUNT(*) FROM users WHERE role='property_owner') AS total_owners,
             (SELECT COUNT(*) FROM users WHERE role='property_manager') AS total_managers,
             (SELECT COUNT(*) FROM users WHERE role='zone_manager') AS total_zone_managers,
+            (SELECT COUNT(*) FROM users WHERE role IN ('geto_officer','geto_manager')) AS total_geto_officers,
             (SELECT COUNT(*) FROM properties) AS total_properties,
             (SELECT COUNT(*) FROM properties WHERE status='approved') AS approved_properties,
             (SELECT COUNT(*) FROM properties WHERE verified=1) AS verified_properties,
@@ -975,17 +2033,22 @@ function routeAdmin(array $parts, string $method): void {
             : 0;
         $visits_today = $isAdmin ? (int)(q1("SELECT COUNT(*) AS cnt FROM page_views WHERE DATE(created_at)=CURDATE()")['cnt'] ?? 0) : null;
         $visits_total = $isAdmin ? (int)(q1("SELECT COUNT(*) AS cnt FROM page_views")['cnt'] ?? 0) : null;
-        ok(['global'=>$global,'zones'=>$byZone,'my_zone'=>!$isAdmin?array_merge($ps??[],$rs??[],$bs??[]):null,
+        ok(['global'=>$global,'zones'=>$byZone,
+            'my_zone'=>!$isAdmin?array_merge($ps??[],$rs??[],$bs??[],$os??[]):null,
+            'officer_stats'=>$officerStats??[],'pending_props'=>$pendingProps??[],
             'manager_stats'=>$managerStats,'pending_from_managers'=>$pendingFromManagers,
             'visits_today'=>$visits_today,'visits_total'=>$visits_total]);
     }
 
     // ── GET /api/admin/properties ─────────────────────────────
-    if ($method === 'GET' && $sub === 'properties') {
+    if ($method === 'GET' && $sub === 'properties' && !$sub2) {
         $sql = "SELECT p.id,p.name,p.property_type,p.area,p.status,p.verified,p.views_count,p.created_at,
                        p.rejection_note,z.code AS zone_code,z.name AS zone_name,c.name AS cluster_name,
                        u.name AS university_name,ow.name AS owner_name,ow.phone AS owner_phone,
-                       (SELECT url FROM property_photos ph WHERE ph.property_id=p.id AND ph.is_main=1 LIMIT 1) AS main_photo,
+                       COALESCE(
+                           (SELECT ph.url FROM property_photos ph WHERE ph.property_id=p.id ORDER BY ph.is_main DESC,ph.sort_order,ph.id LIMIT 1),
+                           (SELECT rp.url FROM room_photos rp JOIN rooms pr ON pr.id=rp.room_id WHERE pr.property_id=p.id ORDER BY rp.is_main DESC,rp.sort_order,rp.id LIMIT 1)
+                       ) AS main_photo,
                        COUNT(DISTINCT r.id) AS room_types,
                        SUM(r.total_count) AS total_rooms, SUM(r.occupied_count) AS occupied
                 FROM properties p
@@ -1049,13 +2112,14 @@ function routeAdmin(array $parts, string $method): void {
         $zid = !empty($b['zone_id']) ? (int)$b['zone_id'] : ($uni['zone_id'] ?? null);
         $cid = !empty($b['cluster_id']) ? (int)$b['cluster_id'] : ($uni['cluster_id'] ?? null);
         $ownerId = !empty($b['owner_id']) ? (int)$b['owner_id'] : (int)$u['id'];
-        // Admin → auto-approved; zone_manager → pending (needs admin review)
-        $status = $isAdmin ? 'approved' : 'pending';
-        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,highlight,nearest_university_id,zone_id,cluster_id,owner_id,youtube_video_id,latitude,longitude,status,created_by,created_by_role) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        // All listings go live immediately — badge (verified=1) requires in-person inspection
+        $status = 'approved';
+        $nearUniId = (int)$b['nearest_university_id'];
+        $pid = qx('INSERT INTO properties (name,property_type,description,address,landmark,area,highlight,nearest_university_id,university_id,zone_id,cluster_id,owner_id,youtube_video_id,latitude,longitude,status,created_by,created_by_role,views_count,distance_km,transport_options,total_floors,rejection_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,NULL)',
             [$b['name'], $b['property_type']??'Hostel', $b['description']??'',
              $b['address']??'', $b['landmark']??null, $b['area']??'',
              !empty($b['highlight']) ? $b['highlight'] : null,
-             (int)$b['nearest_university_id'], $zid, $cid,
+             $nearUniId, $nearUniId, $zid, $cid,
              $ownerId, $b['youtube_video_id']??null,
              !empty($b['latitude']) ? (float)$b['latitude'] : null,
              !empty($b['longitude']) ? (float)$b['longitude'] : null,
@@ -1066,18 +2130,7 @@ function routeAdmin(array $parts, string $method): void {
         foreach ($uniIds as $uid2) {
             if ($uid2 > 0) qn('INSERT IGNORE INTO property_universities (property_id,university_id) VALUES (?,?)', [$pid, $uid2]);
         }
-        // Zone manager: notify admin by SMS
-        if (!$isAdmin) {
-            $adminPhone = getAdminPhone();
-            if ($adminPhone) {
-                $mgrName = $u['name'] ?? 'Msimamizi';
-                sendSMS($adminPhone,
-                    "GETO: {$mgrName} ameongeza mali '{$b['name']}' - inasubiri idhini yako. Ingia portal kukagua.",
-                    "mgr-prop-$pid");
-            }
-            ok(['id'=>$pid, 'status'=>'pending', 'message'=>'Mali imewasilishwa kwa idhini ya admin.']);
-        }
-        ok(['id'=>$pid, 'status'=>'approved', 'message'=>'Property created and approved.']);
+        ok(['id'=>$pid, 'status'=>'approved', 'message'=>'Property is now live. Schedule a verification visit to earn the Geto badge.']);
     }
 
     // ── POST /api/admin/properties/:id/rooms — add room type ──
@@ -1087,8 +2140,8 @@ function routeAdmin(array $parts, string $method): void {
         if (empty($b['room_type']) || empty($b['monthly_price'])) err(400, 'Room type and price required.');
         $total = (int)($b['total_count']??1);
         $occ   = isset($b['occupied_count']) ? (int)$b['occupied_count'] : 0;
-        $rid = qx('INSERT INTO rooms (property_id,room_type,monthly_price,deposit_note,capacity,total_count,occupied_count,furnished,bathroom_type,description) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            [$pid, $b['room_type'], (int)$b['monthly_price'], $b['deposit_note']??null,
+        $rid = qx('INSERT INTO rooms (property_id,room_type,monthly_price,deposit_months,capacity,total_count,occupied_count,furnished,bathroom_type,description) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [$pid, $b['room_type'], (int)$b['monthly_price'], max(1,(int)($b['deposit_months']??1)),
              (int)($b['capacity']??1), $total, $occ,
              (int)($b['furnished']??0), $b['bathroom_type']??'Shared', $b['description']??null]);
         ok(['id'=>$rid]);
@@ -1099,7 +2152,7 @@ function routeAdmin(array $parts, string $method): void {
         $rid = (int)$sub2;
         $b = body();
         $fields=[]; $params=[];
-        foreach (['room_type','monthly_price','deposit_note','capacity','total_count','occupied_count','furnished','bathroom_type','description'] as $f)
+        foreach (['room_type','monthly_price','deposit_months','capacity','total_count','occupied_count','furnished','bathroom_type','description'] as $f)
             if (array_key_exists($f,$b)) { $fields[]="$f=?"; $params[]=$b[$f]; }
         if ($fields) { $params[]=$rid; qn('UPDATE rooms SET '.implode(',',$fields).' WHERE id=?',$params); }
         ok(['updated'=>true]);
@@ -1112,6 +2165,14 @@ function routeAdmin(array $parts, string $method): void {
         qn('DELETE FROM room_videos WHERE room_id=?', [$rid2]);
         qn('DELETE FROM rooms WHERE id=?', [$rid2]);
         ok(['deleted'=>true]);
+    }
+
+    // ── POST /api/admin/properties/:id/photos — upload property photos ─
+    if ($method === 'POST' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'photos') {
+        $pid = (int)$sub2;
+        if (!q1('SELECT id FROM properties WHERE id=?', [$pid])) err(404, 'Property not found.');
+        $saved = saveUploadedPhotos($pid);
+        ok(['uploaded'=>count($saved),'photos'=>$saved]);
     }
 
     // ── POST /api/admin/rooms/:id/photos — upload room photos ─
@@ -1188,9 +2249,13 @@ function routeAdmin(array $parts, string $method): void {
 
     // ── PUT /api/admin/properties/:id/verify ──────────────────
     if ($method === 'PUT' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'verify') {
+        if ($isGetoManager) err(403, 'Only senior staff (zone manager or admin) can verify properties.');
         $pid = (int)$sub2;
-        qn("UPDATE properties SET verified=1,verified_by=?,verified_at=NOW(),verification_expiry=DATE_ADD(NOW(),INTERVAL 6 MONTH) WHERE id=?",
-           [$u['id'],$pid]);
+        $verifyClause = $isAdmin ? '' : ' AND zone_id=?';
+        $verifyParams = $isAdmin ? [$u['id'],$pid] : [$u['id'],$pid,$userZoneId];
+        $affected = qn("UPDATE properties SET verified=1,verified_by=?,verified_at=NOW(),verification_expiry=DATE_ADD(NOW(),INTERVAL 6 MONTH) WHERE id=?" . $verifyClause,
+           $verifyParams);
+        if (!$affected) err(403, 'Property not found in your zone.');
         $vdata = $b['checklist'] ?? [];
         qn("INSERT INTO verification_records (property_id,verified_by,inspection_date,owner_identity,location_confirmed,
                                               rooms_confirmed,water_confirmed,electricity_confirmed,security_confirmed,
@@ -1286,14 +2351,20 @@ function routeAdmin(array $parts, string $method): void {
     }
 
     // ── GET /api/admin/users — list users (scoped) ────────────
-    if ($method === 'GET' && $sub === 'users') {
+    if ($method === 'GET' && $sub === 'users' && !$sub2) {
         $role = $_GET['role'] ?? null;
         $sql = "SELECT u.id,u.name,u.email,u.phone,u.role,u.status,u.verified,u.business_name,
                        u.zone_id,u.created_at,z.code AS zone_code,u.id_front_url,u.id_back_url,
                        (SELECT COUNT(*) FROM properties p WHERE p.owner_id=u.id) AS property_count
                 FROM users u LEFT JOIN zones z ON z.id=u.zone_id WHERE 1=1";
         $params = [];
-        if ($role) { $sql .= ' AND u.role=?'; $params[] = $role; }
+        if ($role) {
+            if ($role === 'geto_officer') {
+                $sql .= " AND u.role IN ('geto_officer','geto_manager')";
+            } else {
+                $sql .= ' AND u.role=?'; $params[] = $role;
+            }
+        }
         if (!empty($_GET['q'])) {
             $sql .= ' AND (u.name LIKE ? OR u.phone LIKE ? OR u.email LIKE ?)';
             $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%';
@@ -1345,34 +2416,84 @@ function routeAdmin(array $parts, string $method): void {
         ok(['suspended'=>true]);
     }
 
-    // ── POST /api/admin/users/owner — create property owner account (admin/geto-manager)
+    // ── GET /api/admin/users/search — autocomplete by name or phone (for owner lookup)
+    if ($method === 'GET' && $sub === 'users' && $sub2 === 'search') {
+        $q = trim($_GET['q'] ?? '');
+        $role = $_GET['role'] ?? null;
+        if (strlen($q) < 2) ok([]);
+        $like = '%'.$q.'%';
+        $roleSql = $role ? " AND u.role=?" : '';
+        $params  = $role ? [$like,$like,$role] : [$like,$like];
+        $results = q("SELECT u.id,u.name,u.email,u.phone,u.role,u.business_name,u.status
+                      FROM users u WHERE (u.name LIKE ? OR u.phone LIKE ?)$roleSql
+                      ORDER BY u.name LIMIT 15", $params);
+        ok($results);
+    }
+
+    // ── POST /api/admin/users/owner — create property owner account
     if ($method === 'POST' && $sub === 'users' && $sub2 === 'owner') {
-        foreach (['name','email','phone','password'] as $f)
+        foreach (['name','phone','password'] as $f)
             if (empty($b[$f])) err(400, "$f required.");
-        if (q1('SELECT id FROM users WHERE email=?', [$b['email']])) err(409, 'Email tayari imesajiliwa.');
+        if (q1('SELECT id FROM users WHERE phone=?', [$b['phone']])) err(409, 'Phone number tayari imesajiliwa.');
+        $email = !empty($b['email']) ? trim($b['email']) : null;
+        if ($email && q1('SELECT id FROM users WHERE email=?', [$email])) err(409, 'Email tayari imesajiliwa.');
+        $role = in_array($b['role']??'', ['property_owner','property_manager']) ? $b['role'] : 'property_owner';
         $ref = makeReferralCode($b['name']);
         $uid = qx("INSERT INTO users (name,email,phone,whatsapp_phone,password_hash,role,status,business_name,referral_code,terms_accepted)
                    VALUES (?,?,?,?,?,?,?,?,?,?)",
-                  [$b['name'],$b['email'],$b['phone'],$b['whatsapp_phone']??$b['phone'],
-                   hashPwd($b['password']),'property_owner','active',
+                  [$b['name'],$email,$b['phone'],$b['whatsapp_phone']??null,
+                   hashPwd($b['password']),$role,'active',
                    $b['business_name']??null,$ref,1]);
-        ok(['id'=>$uid,'message'=>'Owner account created.']);
+        ok(['id'=>$uid,'name'=>$b['name'],'email'=>$email,'phone'=>$b['phone'],'role'=>$role,'message'=>'Account created.']);
+    }
+
+    // ── POST /api/admin/users/geto-officer — create geto officer (admin or zone_manager for their zone)
+    if ($method === 'POST' && $sub === 'users' && ($sub2 === 'geto-officer' || $sub2 === 'geto-manager')) {
+        if ($isGetoManager) err(403, 'Only senior staff can create geto officers.');
+        foreach (['name','phone','password'] as $f)
+            if (empty($b[$f])) err(400, "$f required.");
+        if (q1('SELECT id FROM users WHERE phone=?', [$b['phone']])) err(409, 'Phone number already registered.');
+        $email = !empty($b['email']) ? trim($b['email']) : null;
+        if ($email && q1('SELECT id FROM users WHERE email=?', [$email])) err(409, 'Email already registered.');
+        // Zone managers assign to their own zone; admin can specify
+        $zoneId = $isAdmin ? (!empty($b['zone_id']) ? (int)$b['zone_id'] : null) : $userZoneId;
+        $rid = makeReferralCode($b['name']);
+        $id = qx("INSERT INTO users (name,email,phone,whatsapp_phone,password_hash,role,status,zone_id,referral_code,terms_accepted)
+                  VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 [$b['name'],$email,$b['phone'],$b['phone'],hashPwd($b['password']),'geto_officer','active',
+                  $zoneId,$rid,1]);
+        created(['message'=>'Geto officer created.','userId'=>$id]);
     }
 
     // ── POST /api/admin/users/zone-manager — create zone manager (admin only)
     if ($method === 'POST' && $sub === 'users' && $sub2 === 'zone-manager') {
         requireAdmin();
-        foreach (['name','email','phone','password','zone_id'] as $f)
+        foreach (['name','phone','password'] as $f)
             if (empty($b[$f])) err(400, "$f required.");
-        if (q1('SELECT id FROM users WHERE email=?', [$b['email']])) err(409, 'Email already registered.');
-        $zone = q1('SELECT id,code FROM zones WHERE id=?', [(int)$b['zone_id']]);
-        if (!$zone) err(404, 'Zone not found.');
+        if (q1('SELECT id FROM users WHERE phone=?', [$b['phone']])) err(409, 'Phone number already registered.');
+        $email = !empty($b['email']) ? trim($b['email']) : null;
+        if ($email && q1('SELECT id FROM users WHERE email=?', [$email])) err(409, 'Email already registered.');
+        $zoneId = !empty($b['zone_id']) ? (int)$b['zone_id'] : null;
+        $zone = $zoneId ? q1('SELECT id,code FROM zones WHERE id=?', [$zoneId]) : null;
         $rid = makeReferralCode($b['name']);
-        $id = qx("INSERT INTO users (name,email,phone,password_hash,role,status,zone_id,referral_code,terms_accepted)
-                  VALUES (?,?,?,?,?,?,?,?,?)",
-                 [$b['name'],$b['email'],$b['phone'],hashPwd($b['password']),'zone_manager','active',
-                  (int)$b['zone_id'],$rid,1]);
+        $id = qx("INSERT INTO users (name,email,phone,whatsapp_phone,password_hash,role,status,zone_id,referral_code,terms_accepted)
+                  VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 [$b['name'],$email,$b['phone'],$b['phone'],hashPwd($b['password']),'zone_manager','active',
+                  $zoneId,$rid,1]);
         created(['message'=>'Zone manager created.','userId'=>$id,'zone'=>$zone]);
+    }
+
+    // ── PUT /api/admin/users/:id/promote — promote geto_manager → zone_manager (admin only)
+    if ($method === 'PUT' && $sub === 'users' && is_numeric($sub2) && $sub3 === 'promote') {
+        requireAdmin();
+        $uid = (int)$sub2;
+        $target = q1('SELECT id,name,role FROM users WHERE id=?', [$uid]);
+        if (!$target) err(404, 'User not found.');
+        $newRole = $b['role'] ?? 'zone_manager';
+        if (!in_array($newRole, ['zone_manager','geto_officer','geto_manager','admin'])) err(400, 'Invalid target role.');
+        $zoneId = !empty($b['zone_id']) ? (int)$b['zone_id'] : null;
+        qn('UPDATE users SET role=?, zone_id=COALESCE(?,zone_id) WHERE id=?', [$newRole,$zoneId,$uid]);
+        ok(['promoted'=>true,'name'=>$target['name'],'new_role'=>$newRole]);
     }
 
     // ── POST /api/admin/users/:id/id-photo — upload National ID photo ─
@@ -1417,21 +2538,202 @@ function routeAdmin(array $parts, string $method): void {
     }
 
     // ── GET /api/admin/bookings ───────────────────────────────
-    if ($method === 'GET' && $sub === 'bookings') {
+    if ($method === 'GET' && $sub === 'bookings' && !$sub2) {
+        $where  = $bookingClause;
+        $params = $bookingParams;
+        if (!empty($_GET['status'])) { $where .= ' AND b.status=?'; $params[] = $_GET['status']; }
+        if (!empty($_GET['property_id'])) { $where .= ' AND b.property_id=?'; $params[] = (int)$_GET['property_id']; }
+        if ($isSeniorStaff && !empty($_GET['assigned_to'])) { $where .= ' AND b.assigned_to=?'; $params[] = (int)$_GET['assigned_to']; }
         $sql = "SELECT b.id,b.move_in_date,b.status,b.created_at,
-                       p.name AS property_name,p.area,z.code AS zone_code,
-                       r.room_type,r.monthly_price,
-                       s.name AS student_name,s.phone AS student_phone,
-                       ow.name AS owner_name
+                       b.amount_paid,b.contract_start,b.contract_end,b.payment_receipt_ref,
+                       b.assigned_to,b.payment_confirmed_at,b.student_confirmed_at,b.booked_by_staff_role,
+                       p.id AS property_id,p.name AS property_name,p.area,p.property_type,z.code AS zone_code,
+                       r.room_type,r.monthly_price,r.deposit_months,r.capacity,
+                       s.id AS student_id,s.name AS student_name,s.username AS student_username,
+                       s.phone AS student_phone,s.email AS student_email,
+                       (SELECT name FROM universities WHERE id=s.university_id) AS student_university,
+                       ow.name AS owner_name,
+                       gm.name AS assigned_gm_name,gm.phone AS assigned_gm_phone,gm.referral_code AS assigned_gm_code,
+                       COALESCE(opp.auto_payout_enabled,0) AS owner_auto_payout
                 FROM bookings b
                 JOIN properties p ON p.id=b.property_id
                 LEFT JOIN zones z ON z.id=p.zone_id
                 JOIN rooms r ON r.id=b.room_id
                 JOIN users s ON s.id=b.student_id
                 JOIN users ow ON ow.id=b.owner_id
-                WHERE $zoneClause
-                ORDER BY b.created_at DESC";
-        ok(q($sql, $zoneParams));
+                LEFT JOIN users gm ON gm.id=b.assigned_to
+                LEFT JOIN owner_payout_profiles opp ON opp.owner_id=b.owner_id
+                WHERE $where
+                ORDER BY b.created_at DESC
+                LIMIT 200";
+        ok(q($sql, $params));
+    }
+
+    // ── GET /api/admin/bookings/:id — full single booking detail ──
+    if ($method === 'GET' && $sub === 'bookings' && is_numeric($sub2) && !$sub3) {
+        $bid = (int)$sub2;
+        $bk = q1("SELECT b.*,
+                         s.name AS student_name,s.username AS student_username,s.phone AS student_phone,
+                         s.email AS student_email,
+                         (SELECT name FROM universities WHERE id=s.university_id) AS student_university,
+                         p.name AS property_name,p.area,p.address,p.id AS prop_id,p.property_type,
+                         r.room_type,r.monthly_price,r.deposit_months,r.capacity,r.bathroom_type,r.furnished,
+                         z.code AS zone_code,z.name AS zone_name,
+                         gm.id AS gm_id,gm.name AS assigned_gm_name,gm.phone AS assigned_gm_phone,
+                         gm.referral_code AS assigned_gm_code,
+                         confirmer.name AS payment_confirmed_by_name,
+                         booker.name AS booked_by_staff_name,
+                         COALESCE(opp.auto_payout_enabled,0) AS owner_auto_payout
+                  FROM bookings b
+                  JOIN users s ON s.id=b.student_id
+                  JOIN properties p ON p.id=b.property_id
+                  JOIN rooms r ON r.id=b.room_id
+                  LEFT JOIN zones z ON z.id=p.zone_id
+                  LEFT JOIN users gm ON gm.id=b.assigned_to
+                  LEFT JOIN users confirmer ON confirmer.id=b.payment_confirmed_by
+                  LEFT JOIN users booker ON booker.id=b.booked_by_staff
+                  LEFT JOIN owner_payout_profiles opp ON opp.owner_id=b.owner_id
+                  WHERE b.id=? AND $bookingClause", array_merge([$bid], $bookingParams));
+        if (!$bk) err(404, 'Booking not found or access denied.');
+        // Auto-suggest a GM based on property creator or student's referrer
+        $suggestedGm = q1("SELECT u.id,u.name,u.phone,u.referral_code
+                            FROM properties p
+                            JOIN users u ON u.id=p.created_by AND u.role IN ('geto_manager','geto_officer')
+                            WHERE p.id=?
+                            UNION
+                            SELECT u2.id,u2.name,u2.phone,u2.referral_code
+                            FROM users s
+                            JOIN users u2 ON u2.id=s.referred_by AND u2.role IN ('geto_manager','geto_officer')
+                            WHERE s.id=? LIMIT 1", [$bk['prop_id'],$bk['student_id']]);
+        $bk['suggested_gm'] = $suggestedGm;
+        ok($bk);
+    }
+
+    // ── GET /api/admin/users/students — search students for staff booking flow ──
+    if ($method === 'GET' && $sub === 'users' && $sub2 === 'students') {
+        requireStaff();
+        $q = trim($_GET['q'] ?? '');
+        if (strlen($q) < 2) err(400, 'Search query must be at least 2 characters.');
+        $uid = !empty($_GET['university_id']) ? (int)$_GET['university_id'] : null;
+        $sql = "SELECT u.id,u.name,u.username,u.phone,u.email,u.university_id,
+                       un.name AS university_name
+                FROM users u LEFT JOIN universities un ON un.id=u.university_id
+                WHERE u.role='student'
+                AND (u.name LIKE ? OR u.username LIKE ? OR u.phone LIKE ?)";
+        $params = ['%'.$q.'%','%'.$q.'%','%'.$q.'%'];
+        if ($uid) { $sql .= ' AND u.university_id=?'; $params[] = $uid; }
+        $sql .= ' ORDER BY u.name LIMIT 20';
+        ok(q($sql, $params));
+    }
+
+    // ── POST /api/admin/bookings — staff creates booking for a student ──
+    if ($method === 'POST' && $sub === 'bookings' && !$sub2) {
+        $staff = requireStaff();
+        $b2 = body();
+        foreach (['student_id','property_id','room_id','move_in_date'] as $f)
+            if (empty($b2[$f])) err(400, "$f required.");
+        $student = q1("SELECT id FROM users WHERE id=? AND role='student'", [(int)$b2['student_id']]);
+        if (!$student) err(404, 'Student not found.');
+        $prop = q1("SELECT id,owner_id FROM properties WHERE id=? AND status='approved'", [(int)$b2['property_id']]);
+        if (!$prop) err(404, 'Property not found.');
+        $room = q1('SELECT id, total_count, capacity, property_id FROM rooms WHERE id=? AND property_id=?',
+                   [(int)$b2['room_id'],(int)$b2['property_id']]);
+        if (!$room) err(404, 'Room not found.');
+        $ACTIVE = "'payment_confirmed','student_confirmed','active','checked_in'";
+        $unitInfo2 = q1("SELECT COUNT(DISTINCT ru.id) AS unit_count,
+                                COALESCE(SUM(COALESCE(ru.capacity, r.capacity)), 0) AS total_beds
+                         FROM room_units ru JOIN rooms r ON r.id=ru.room_type_id
+                         WHERE ru.room_type_id=? AND ru.property_id=? AND ru.is_active=1",
+                        [(int)$room['id'], (int)$room['property_id']]);
+        if ((int)$unitInfo2['unit_count'] > 0) {
+            $confirmedBeds2 = (int)(q1("SELECT COUNT(*) AS cnt FROM bookings bk
+                                         JOIN room_units ru ON ru.id=bk.room_unit_id
+                                         WHERE ru.room_type_id=? AND ru.property_id=? AND ru.is_active=1
+                                           AND bk.status IN ($ACTIVE)",
+                                        [(int)$room['id'], (int)$room['property_id']])['cnt'] ?? 0);
+            if ($confirmedBeds2 >= (int)$unitInfo2['total_beds']) err(409, 'No spaces available in this room.');
+        } else {
+            $confirmedBks2 = (int)(q1("SELECT COUNT(*) AS cnt FROM bookings WHERE room_id=? AND status IN ($ACTIVE)", [(int)$room['id']])['cnt'] ?? 0);
+            $totalSlots2 = (int)$room['total_count'] * max(1, (int)$room['capacity']);
+            if ($confirmedBks2 >= $totalSlots2) err(409, 'No spaces available in this room.');
+        }
+        $dup = q1("SELECT id FROM bookings WHERE student_id=? AND property_id=? AND status NOT IN ('rejected','cancelled','checked_out','move_out_completed')", [(int)$b2['student_id'],(int)$b2['property_id']]);
+        if ($dup) err(409, 'This student already has an active booking at this property.');
+        $isOfficer = in_array($staff['role'], ['geto_manager','geto_officer']);
+        $initStatus = $isOfficer ? 'assigned' : 'pending';
+        $bid = qx("INSERT INTO bookings (student_id,property_id,room_id,owner_id,move_in_date,move_in_notes,status,booked_by_staff,booked_by_staff_role,assigned_to)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  [(int)$b2['student_id'],(int)$b2['property_id'],(int)$b2['room_id'],(int)$prop['owner_id'],
+                   $b2['move_in_date'],$b2['notes']??null,$initStatus,(int)$staff['id'],$staff['role'],
+                   $isOfficer?(int)$staff['id']:null]);
+        created(['id'=>$bid,'status'=>$initStatus,
+                 'message'=>'Booking created. Student will need to confirm after payment is recorded.']);
+    }
+
+    // ── POST /api/admin/bookings/:id/assign-geto — assign GM to a booking ──
+    if ($method === 'POST' && $sub === 'bookings' && is_numeric($sub2) && $sub3 === 'assign-geto') {
+        requireSeniorStaff();
+        $bid = (int)$sub2;
+        $b2 = body();
+        $gmId = (int)($b2['assigned_to'] ?? $b2['geto_manager_id'] ?? 0);
+        if (!$gmId) err(400, 'assigned_to (geto officer id) required.');
+        $gm = q1("SELECT id FROM users WHERE id=? AND role IN ('geto_manager','geto_officer')", [$gmId]);
+        if (!$gm) err(404, 'Geto officer not found.');
+        $bk = q1("SELECT b.id,b.status FROM bookings b JOIN properties p ON p.id=b.property_id WHERE b.id=? AND $zoneClause", array_merge([$bid],$zoneParams));
+        if (!$bk) err(404, 'Booking not found or not in your zone.');
+        qn("UPDATE bookings SET assigned_to=?, status=IF(status='pending','assigned',status) WHERE id=?",
+           [$gmId,$bid]);
+        ok(['assigned'=>true,'message'=>'Booking assigned to Geto Officer.']);
+    }
+
+    // ── POST /api/admin/bookings/:id/confirm-payment — record payment details ──
+    if ($method === 'POST' && $sub === 'bookings' && is_numeric($sub2) && $sub3 === 'confirm-payment') {
+        $staff = requireStaff();
+        $bid = (int)$sub2;
+        $b2 = body();
+        // Geto officer can only confirm if booking is assigned to them
+        if (in_array($staff['role'], ['geto_manager','geto_officer'])) {
+            $bk = q1('SELECT id,assigned_to FROM bookings WHERE id=?', [$bid]);
+            if (!$bk || (int)$bk['assigned_to'] !== (int)$staff['id'])
+                err(403, 'This booking is not assigned to you.');
+        } else {
+            $bk = q1("SELECT b.id FROM bookings b JOIN properties p ON p.id=b.property_id WHERE b.id=? AND $zoneClause", array_merge([$bid],$zoneParams));
+            if (!$bk) err(404, 'Booking not found.');
+        }
+        $amount   = (int)($b2['amount_paid'] ?? 0);
+        $start    = $b2['contract_start'] ?? null;
+        $end      = $b2['contract_end'] ?? null;
+        $runitId  = !empty($b2['room_unit_id']) ? (int)$b2['room_unit_id'] : null;
+        if (!$amount || !$start || !$end)
+            err(400, 'amount_paid, contract_start, and contract_end are required.');
+        // Validate room unit belongs to this booking's property if supplied
+        if ($runitId) {
+            $bkRoom = q1('SELECT b.property_id FROM bookings b WHERE b.id=?', [$bid]);
+            $unit   = q1('SELECT id FROM room_units WHERE id=? AND property_id=?', [$runitId, $bkRoom['property_id']]);
+            if (!$unit) err(404, 'Room unit not found for this property.');
+        }
+        $unitSql = $runitId ? ', room_unit_id=?' : '';
+        $params  = [$amount,$b2['payment_receipt_ref']??null,$b2['payment_note']??null,$start,$end,(int)$staff['id']];
+        if ($runitId) $params[] = $runitId;
+        $params[] = $bid;
+        qn("UPDATE bookings SET status='payment_confirmed', amount_paid=?, payment_receipt_ref=?,
+            payment_note=?, contract_start=?, contract_end=?,
+            payment_confirmed_by=?, payment_confirmed_at=NOW()$unitSql
+            WHERE id=?", $params);
+        ok(['recorded'=>true,'message'=>'Payment recorded. The student must now log in and confirm to activate their QR code.']);
+    }
+
+    // ── DELETE /api/admin/bookings/:id — cancel/reject a booking (staff) ──
+    if ($method === 'DELETE' && $sub === 'bookings' && is_numeric($sub2)) {
+        requireSeniorStaff();
+        $bid = (int)$sub2;
+        $bk = q1("SELECT b.id,b.status FROM bookings b JOIN properties p ON p.id=b.property_id WHERE b.id=? AND $zoneClause", array_merge([$bid],$zoneParams));
+        if (!$bk) err(404, 'Booking not found.');
+        if (in_array($bk['status'],['active','checked_in','move_in_completed']))
+            err(400, 'Cannot cancel a booking with an active tenant.');
+        $b2 = body();
+        qn("UPDATE bookings SET status='cancelled', admin_notes=? WHERE id=?", [$b2['note']??null,$bid]);
+        ok(['cancelled'=>true]);
     }
 
     // ── GET /api/admin/zones — zone list with stats (admin only)
@@ -1450,6 +2752,7 @@ function routeAdmin(array $parts, string $method): void {
               GROUP BY z.id ORDER BY z.city, z.code");
         foreach ($zones as &$z) {
             $z['clusters'] = q('SELECT id,code,name,active FROM clusters WHERE zone_id=? ORDER BY code', [(int)$z['id']]);
+            $z['coverage'] = q('SELECT id,coverage_type,coverage_value FROM zone_coverage WHERE zone_id=? ORDER BY coverage_type,coverage_value', [(int)$z['id']]);
         }
         ok($zones);
     }
@@ -1494,6 +2797,28 @@ function routeAdmin(array $parts, string $method): void {
         ok(['id'=>$id,'zone_id'=>$zid,'code'=>$code,'name'=>trim($b['name']),'active'=>1]);
     }
 
+    // ── POST /api/admin/zones/:id/coverage — add a region/district/ward to zone coverage
+    if ($method === 'POST' && $sub === 'zones' && is_numeric($sub2) && $sub3 === 'coverage') {
+        requireAdmin();
+        $zid = (int)$sub2;
+        if (!q1('SELECT id FROM zones WHERE id=?', [$zid])) err(404, 'Zone not found.');
+        $b = body();
+        $type = $b['coverage_type'] ?? '';
+        $val  = trim($b['coverage_value'] ?? '');
+        if (!in_array($type, ['region','district','ward']) || !$val) err(400, 'coverage_type (region/district/ward) and coverage_value required.');
+        try {
+            $id = qx('INSERT INTO zone_coverage (zone_id,coverage_type,coverage_value) VALUES (?,?,?)', [$zid,$type,$val]);
+            ok(['id'=>$id,'zone_id'=>$zid,'coverage_type'=>$type,'coverage_value'=>$val]);
+        } catch(\PDOException $e) { err(409, 'Coverage entry already exists.'); }
+    }
+
+    // ── DELETE /api/admin/zones/:id/coverage/:cov_id — remove a coverage entry
+    if ($method === 'DELETE' && $sub === 'zones' && is_numeric($sub2) && $sub3 === 'coverage' && is_numeric($sub4)) {
+        requireAdmin();
+        qn('DELETE FROM zone_coverage WHERE id=? AND zone_id=?', [(int)$sub4, (int)$sub2]);
+        ok(['deleted'=>true]);
+    }
+
     // ── GET /api/admin/zone-managers ─────────────────────────
     if ($method === 'GET' && $sub === 'zone-managers') {
         requireAdmin();
@@ -1504,6 +2829,371 @@ function routeAdmin(array $parts, string $method): void {
               WHERE u.role='zone_manager' ORDER BY z.code"));
     }
 
+    // ── GET /api/admin/staff — list geto_managers (ZM scoped to their zone, admin sees all)
+    if ($method === 'GET' && $sub === 'staff' && !$sub2) {
+        $sql = "SELECT u.id,u.name,u.email,u.phone,u.status,u.role,u.referral_code,u.created_at,
+                       z.code AS zone_code,z.name AS zone_name,
+                       (SELECT COUNT(*) FROM bookings b WHERE b.assigned_to=u.id
+                        AND b.status NOT IN ('rejected','cancelled','checked_out')) AS active_bookings
+                FROM users u LEFT JOIN zones z ON z.id=u.zone_id
+                WHERE u.role IN ('geto_manager','geto_officer')";
+        $params = [];
+        if (!$isAdmin) { $sql .= ' AND u.zone_id=?'; $params[] = $userZoneId; }
+        if (!empty($_GET['q'])) {
+            $sql .= ' AND (u.name LIKE ? OR u.phone LIKE ?)';
+            $params[] = '%'.$_GET['q'].'%'; $params[] = '%'.$_GET['q'].'%';
+        }
+        $sql .= ' ORDER BY u.name';
+        ok(q($sql, $params));
+    }
+
+    // ─── Room-unit management ────────────────────────────────────
+
+    // GET /api/admin/properties/:id/room-units
+    if ($method === 'GET' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'room-units' && !$sub4) {
+        $pid = (int)$sub2;
+        $ACTIVE = "'payment_confirmed','student_confirmed','active','checked_in'";
+        $units = q("SELECT ru.id, ru.unit_number, ru.floor, ru.status, ru.is_active,
+                           ru.capacity AS unit_capacity, ru.created_at,
+                           r.id AS room_type_id, r.room_type, r.monthly_price,
+                           r.capacity AS room_capacity,
+                           COALESCE(ru.capacity, r.capacity) AS effective_capacity,
+                           COUNT(b.id) AS occupied_count,
+                           GREATEST(0, COALESCE(ru.capacity, r.capacity) - COUNT(b.id)) AS available_slots
+                    FROM room_units ru
+                    JOIN rooms r ON r.id = ru.room_type_id
+                    LEFT JOIN bookings b ON b.room_unit_id = ru.id
+                        AND b.status IN ($ACTIVE)
+                    WHERE ru.property_id=? AND ru.is_active=1
+                    GROUP BY ru.id, r.id
+                    ORDER BY ru.floor, CAST(REGEXP_REPLACE(ru.unit_number,'[^0-9]','') AS UNSIGNED), ru.unit_number",
+                   [$pid]);
+        // Attach tenant list per unit (staff can see names)
+        $unitIds = array_column($units, 'id');
+        if ($unitIds) {
+            $ph = implode(',', array_fill(0, count($unitIds), '?'));
+            $tenants = q("SELECT b.id AS booking_id, b.room_unit_id, b.status AS booking_status,
+                                 b.contract_start, b.contract_end, b.amount_paid,
+                                 s.id AS student_id, s.name AS tenant_name,
+                                 s.phone AS tenant_phone, s.username
+                          FROM bookings b JOIN users s ON s.id=b.student_id
+                          WHERE b.room_unit_id IN ($ph) AND b.status IN ($ACTIVE)
+                          ORDER BY b.contract_start", $unitIds);
+            $byUnit = [];
+            foreach ($tenants as $t) $byUnit[$t['room_unit_id']][] = $t;
+            foreach ($units as &$u2) $u2['tenants'] = $byUnit[$u2['id']] ?? [];
+            unset($u2);
+        } else {
+            foreach ($units as &$u2) $u2['tenants'] = [];
+            unset($u2);
+        }
+        ok($units);
+    }
+
+    // POST /api/admin/properties/:id/room-units — create single unit
+    if ($method === 'POST' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'room-units' && !$sub4) {
+        $pid = (int)$sub2;
+        if (empty($b['unit_number']) || empty($b['room_type_id'])) err(400, 'unit_number and room_type_id required.');
+        $exists = q1('SELECT id FROM room_units WHERE property_id=? AND unit_number=?', [$pid, $b['unit_number']]);
+        if ($exists) err(409, 'Unit number already exists for this property.');
+        $uid2 = qx('INSERT INTO room_units (property_id,room_type_id,unit_number,floor,status) VALUES (?,?,?,?,?)',
+            [$pid, (int)$b['room_type_id'], trim($b['unit_number']),
+             (int)($b['floor']??1), $b['status']??'available']);
+        ok(['id'=>$uid2,'unit_number'=>trim($b['unit_number'])]);
+    }
+
+    // POST /api/admin/properties/:id/room-units/named — add named units from list
+    if ($method === 'POST' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'room-units' && $sub4 === 'named') {
+        $pid = (int)$sub2;
+        if (empty($b['room_type_id']) || empty($b['units']) || !is_array($b['units']))
+            err(400, 'room_type_id and units[] array required.');
+        $rtid = (int)$b['room_type_id'];
+        $floor = max(1, (int)($b['floor'] ?? 1));
+        $created = 0; $skipped = 0;
+        foreach ($b['units'] as $un) {
+            $un = trim((string)$un);
+            if ($un === '') continue;
+            $exists = q1('SELECT id FROM room_units WHERE property_id=? AND unit_number=?', [$pid, $un]);
+            if ($exists) { $skipped++; continue; }
+            qx('INSERT INTO room_units (property_id,room_type_id,unit_number,floor) VALUES (?,?,?,?)', [$pid,$rtid,$un,$floor]);
+            $created++;
+        }
+        ok(['created'=>$created,'skipped'=>$skipped]);
+    }
+
+    // POST /api/admin/properties/:id/room-units/bulk — bulk generate units
+    if ($method === 'POST' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'room-units' && $sub4 === 'bulk') {
+        $pid = (int)$sub2;
+        if (empty($b['room_type_id']) || empty($b['floors']) || empty($b['units_per_floor'])) {
+            err(400, 'room_type_id, floors, units_per_floor required.');
+        }
+        $rtid      = (int)$b['room_type_id'];
+        $floors    = max(1, min(20, (int)$b['floors']));
+        $upf       = max(1, min(50, (int)$b['units_per_floor']));
+        $prefix    = strtoupper(trim($b['prefix'] ?? ''));
+        $startNum  = max(1, (int)($b['start_number'] ?? 1));
+        $created = 0; $skipped = 0;
+        for ($fl = 1; $fl <= $floors; $fl++) {
+            for ($n = $startNum; $n < $startNum + $upf; $n++) {
+                $unitNum = $prefix
+                    ? $prefix . str_pad($fl, 1, '0', STR_PAD_LEFT) . str_pad($n, 2, '0', STR_PAD_LEFT)
+                    : $fl . str_pad($n, 2, '0', STR_PAD_LEFT);
+                $exists = q1('SELECT id FROM room_units WHERE property_id=? AND unit_number=?', [$pid, $unitNum]);
+                if ($exists) { $skipped++; continue; }
+                qx('INSERT INTO room_units (property_id,room_type_id,unit_number,floor) VALUES (?,?,?,?)',
+                   [$pid, $rtid, $unitNum, $fl]);
+                $created++;
+            }
+        }
+        ok(['created'=>$created,'skipped'=>$skipped]);
+    }
+
+    // PUT /api/admin/room-units/:id — update status/capacity/floor toggle
+    if ($method === 'PUT' && $sub === 'room-units' && is_numeric($sub2) && !$sub3) {
+        $ruid = (int)$sub2;
+        $fields = []; $params = [];
+        foreach (['status','is_active','floor','room_type_id','capacity'] as $f) {
+            if (array_key_exists($f, $b)) {
+                $fields[] = "$f=?";
+                $params[] = ($f === 'capacity' && ($b[$f] === '' || $b[$f] === null)) ? null : $b[$f];
+            }
+        }
+        if (!$fields) err(400, 'Nothing to update.');
+        $params[] = $ruid;
+        qn('UPDATE room_units SET '.implode(',',$fields).' WHERE id=?', $params);
+        ok(['updated'=>true]);
+    }
+
+    // DELETE /api/admin/room-units/:id — soft-delete (deactivate)
+    if ($method === 'DELETE' && $sub === 'room-units' && is_numeric($sub2)) {
+        $ruid = (int)$sub2;
+        $occupied = q1("SELECT id FROM bookings WHERE room_unit_id=?
+                        AND status IN ('payment_confirmed','student_confirmed','active','checked_in')", [$ruid]);
+        if ($occupied) err(409, 'Cannot remove a unit with an active tenant.');
+        qn('UPDATE room_units SET is_active=0 WHERE id=?', [$ruid]);
+        ok(['deleted'=>true]);
+    }
+
+    // GET /api/admin/properties/:id/occupancy — floor/grid data (detailed, with tenants)
+    if ($method === 'GET' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'occupancy') {
+        $pid = (int)$sub2;
+        $prop = q1('SELECT id,name,area FROM properties WHERE id=?', [$pid]);
+        if (!$prop) err(404, 'Property not found.');
+        $ACTIVE = "'payment_confirmed','student_confirmed','active','checked_in'";
+        $units = q("SELECT ru.id, ru.unit_number, ru.floor, ru.status, ru.room_type_id,
+                           ru.capacity AS unit_capacity,
+                           r.room_type, r.monthly_price, r.capacity AS room_capacity,
+                           COALESCE(ru.capacity, r.capacity) AS effective_capacity,
+                           COUNT(b.id) AS occupied_count,
+                           GREATEST(0, COALESCE(ru.capacity, r.capacity) - COUNT(b.id)) AS available_slots
+                    FROM room_units ru
+                    JOIN rooms r ON r.id = ru.room_type_id
+                    LEFT JOIN bookings b ON b.room_unit_id = ru.id AND b.status IN ($ACTIVE)
+                    WHERE ru.property_id=? AND ru.is_active=1
+                    GROUP BY ru.id, r.id
+                    ORDER BY ru.floor, CAST(REGEXP_REPLACE(ru.unit_number,'[^0-9]','') AS UNSIGNED), ru.unit_number",
+                   [$pid]);
+        // Attach tenants
+        $unitIds = array_column($units, 'id');
+        if ($unitIds) {
+            $ph = implode(',', array_fill(0, count($unitIds), '?'));
+            $tenants = q("SELECT b.id AS booking_id, b.room_unit_id, b.status AS booking_status,
+                                 b.contract_start, b.contract_end, b.amount_paid,
+                                 s.id AS student_id, s.name AS tenant_name,
+                                 s.phone AS tenant_phone, s.username
+                          FROM bookings b JOIN users s ON s.id=b.student_id
+                          WHERE b.room_unit_id IN ($ph) AND b.status IN ($ACTIVE)
+                          ORDER BY b.contract_start", $unitIds);
+            $byUnit = [];
+            foreach ($tenants as $t) $byUnit[$t['room_unit_id']][] = $t;
+            foreach ($units as &$u2) $u2['tenants'] = $byUnit[$u2['id']] ?? [];
+            unset($u2);
+        } else {
+            foreach ($units as &$u2) $u2['tenants'] = [];
+            unset($u2);
+        }
+        $floors = [];
+        foreach ($units as $u2) {
+            $fl = (int)$u2['floor'];
+            if (!isset($floors[$fl])) $floors[$fl] = ['floor'=>$fl,'units'=>[]];
+            $floors[$fl]['units'][] = $u2;
+        }
+        $totalBeds  = array_sum(array_column($units, 'effective_capacity'));
+        $occupiedBeds = array_sum(array_column($units, 'occupied_count'));
+        $maintCnt   = count(array_filter($units, fn($u2) => $u2['status']==='maintenance'));
+        ok([
+            'property' => $prop,
+            'floors'   => array_values($floors),
+            'summary'  => [
+                'total_beds'    => $totalBeds,
+                'occupied_beds' => $occupiedBeds,
+                'available_beds'=> max(0, $totalBeds - $occupiedBeds),
+                'total_units'   => count($units),
+                'full_units'    => count(array_filter($units, fn($u2) => (int)$u2['available_slots']===0 && $u2['status']!=='maintenance')),
+                'partial_units' => count(array_filter($units, fn($u2) => (int)$u2['occupied_count']>0 && (int)$u2['available_slots']>0)),
+                'empty_units'   => count(array_filter($units, fn($u2) => (int)$u2['occupied_count']===0 && $u2['status']==='available')),
+                'maintenance'   => $maintCnt,
+            ],
+        ]);
+    }
+
+    // GET /api/admin/properties/:id/analytics — by-room-type breakdown
+    if ($method === 'GET' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'analytics') {
+        $pid = (int)$sub2;
+        $ACTIVE = "'payment_confirmed','student_confirmed','active','checked_in'";
+        $byType = q("SELECT r.id AS room_type_id, r.room_type, r.monthly_price,
+                            r.capacity AS default_capacity,
+                            COUNT(DISTINCT ru.id) AS unit_count,
+                            SUM(COALESCE(ru.capacity, r.capacity)) AS total_beds,
+                            SUM(sub.occ) AS occupied_beds,
+                            SUM(GREATEST(0, COALESCE(ru.capacity, r.capacity) - sub.occ)) AS available_beds,
+                            SUM(CASE WHEN sub.occ >= COALESCE(ru.capacity, r.capacity) THEN 1 ELSE 0 END) AS full_units,
+                            SUM(CASE WHEN sub.occ > 0 AND sub.occ < COALESCE(ru.capacity, r.capacity) THEN 1 ELSE 0 END) AS partial_units,
+                            SUM(CASE WHEN sub.occ = 0 THEN 1 ELSE 0 END) AS empty_units
+                     FROM rooms r
+                     JOIN room_units ru ON ru.room_type_id = r.id AND ru.property_id=? AND ru.is_active=1
+                     LEFT JOIN (
+                         SELECT room_unit_id, COUNT(*) AS occ
+                         FROM bookings WHERE status IN ($ACTIVE) AND room_unit_id IS NOT NULL
+                         GROUP BY room_unit_id
+                     ) sub ON sub.room_unit_id = ru.id
+                     WHERE r.property_id=?
+                     GROUP BY r.id
+                     ORDER BY r.monthly_price", [$pid, $pid]);
+        $totals = ['total_beds'=>0,'occupied_beds'=>0,'available_beds'=>0,'total_units'=>0];
+        foreach ($byType as $row) {
+            $totals['total_beds']    += (int)$row['total_beds'];
+            $totals['occupied_beds'] += (int)$row['occupied_beds'];
+            $totals['available_beds']+= (int)$row['available_beds'];
+            $totals['total_units']   += (int)$row['unit_count'];
+        }
+        ok(['totals'=>$totals,'by_room_type'=>$byType]);
+    }
+
+    // GET /api/admin/properties/:id/unassigned-bookings
+    if ($method === 'GET' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'unassigned-bookings') {
+        $pid = (int)$sub2;
+        ok(q("SELECT b.id, b.move_in_date, b.contract_start, b.contract_end, b.amount_paid,
+                     s.name AS student_name, s.phone AS student_phone,
+                     r.room_type, r.room_type_id,
+                     r.monthly_price
+              FROM bookings b
+              JOIN users s ON s.id = b.student_id
+              JOIN rooms r ON r.id = b.room_id
+              WHERE b.property_id=? AND b.status='confirmed' AND b.room_unit_id IS NULL
+              ORDER BY b.created_at ASC", [$pid]));
+    }
+
+    // POST /api/admin/bookings/:id/assign-unit
+    if ($method === 'POST' && $sub === 'bookings' && is_numeric($sub2) && $sub3 === 'assign-unit') {
+        $bid = (int)$sub2;
+        if (empty($b['room_unit_id'])) err(400, 'room_unit_id required.');
+        $ruid = (int)$b['room_unit_id'];
+
+        $booking = q1("SELECT b.id, b.status, b.room_id, b.property_id
+                       FROM bookings b WHERE b.id=?", [$bid]);
+        if (!$booking) err(404, 'Booking not found.');
+        if ($booking['status'] !== 'confirmed') err(400, 'Can only assign a unit to a confirmed booking.');
+
+        $unit = q1("SELECT ru.id, ru.room_type_id, ru.status, ru.capacity AS unit_capacity,
+                           r.room_type, r.capacity AS room_capacity
+                    FROM room_units ru JOIN rooms r ON r.id=ru.room_type_id WHERE ru.id=?", [$ruid]);
+        if (!$unit) err(404, 'Room unit not found.');
+        if ($unit['status'] === 'maintenance') err(409, 'Unit is under maintenance.');
+
+        // Check that the unit's room type matches the booked room type
+        $bookedRoom = q1('SELECT id FROM rooms WHERE id=? AND property_id=?', [$booking['room_id'], $booking['property_id']]);
+        if (!$bookedRoom) err(400, 'Room type mismatch between booking and unit.');
+        if ((int)$unit['room_type_id'] !== (int)$booking['room_id']) {
+            err(409, 'Unit room type does not match the booked room type.');
+        }
+
+        // Check capacity — for shared rooms allow multiple bookings up to capacity
+        $effectiveCap = (int)($unit['unit_capacity'] ?? $unit['room_capacity'] ?? 1);
+        $occupied = q1("SELECT COUNT(*) AS cnt FROM bookings
+                        WHERE room_unit_id=? AND id!=?
+                          AND status IN ('payment_confirmed','student_confirmed','active','checked_in')",
+                       [$ruid, $bid]);
+        if ((int)$occupied['cnt'] >= $effectiveCap) err(409, 'Unit is full — no beds available.');
+
+        qn('UPDATE bookings SET room_unit_id=?,assigned_at=NOW(),assigned_by=? WHERE id=?',
+           [$ruid, (int)$u['id'], $bid]);
+        ok(['assigned'=>true]);
+    }
+
+    // DELETE /api/admin/bookings/:id/assign-unit — unassign
+    if ($method === 'DELETE' && $sub === 'bookings' && is_numeric($sub2) && $sub3 === 'assign-unit') {
+        $bid = (int)$sub2;
+        qn('UPDATE bookings SET room_unit_id=NULL,assigned_at=NULL,assigned_by=NULL WHERE id=?', [$bid]);
+        ok(['unassigned'=>true]);
+    }
+
+    // ── POST /api/admin/bookings/:id/tenant-photo ─────────────────
+    // GM (or any staff) uploads a photo of the student; stored and shown on QR scan
+    if ($method === 'POST' && $sub === 'bookings' && is_numeric($sub2) && $sub3 === 'tenant-photo') {
+        requireStaff();
+        $bid = (int)$sub2;
+        $dir  = '/home/getostudentco/public_html/uploads/tenant-photos/';
+        $base = 'https://getostudent.co.tz/uploads/tenant-photos/';
+        if (!is_dir($dir)) @mkdir($dir, 0755, true);
+
+        if (!empty($_FILES['photo']['tmp_name'])) {
+            // multipart file upload (camera capture or file picker)
+            $file = $_FILES['photo'];
+            if ($file['error'] !== UPLOAD_ERR_OK) err(400, 'Upload failed.');
+            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION) ?: 'jpg');
+            if (!in_array($ext, ['jpg','jpeg','png','webp'])) err(400, 'Photo must be jpg/png/webp.');
+            if ($file['size'] > 5*1024*1024) err(400, 'Photo must be under 5 MB.');
+            $fname = 'tenant_' . $bid . '_' . time() . '.' . $ext;
+            move_uploaded_file($file['tmp_name'], $dir . $fname);
+        } else {
+            // JSON body with base64 data URI (mobile camera via browser)
+            $bd = body();
+            $data = $bd['photo_data'] ?? '';
+            if (!$data || !preg_match('/^data:image\/(jpeg|png|webp);base64,/i', $data, $m))
+                err(400, 'photo_data (data URI) or multipart photo required.');
+            $raw = base64_decode(preg_replace('/^data:image\/[^;]+;base64,/i', '', $data));
+            if (!$raw || strlen($raw) > 5*1024*1024) err(400, 'Image too large or invalid.');
+            $ext   = strtolower($m[1]) === 'jpeg' ? 'jpg' : strtolower($m[1]);
+            $fname = 'tenant_' . $bid . '_' . time() . '.' . $ext;
+            file_put_contents($dir . $fname, $raw);
+        }
+        $url = $base . $fname;
+        qn("UPDATE bookings SET tenant_photo_url=? WHERE id=?", [$url, $bid]);
+        ok(['url' => $url]);
+    }
+
+    // ── GET /api/admin/payments — list payment transactions ───────
+    if ($method === 'GET' && $sub === 'payments' && !$sub2) {
+        $psql = "SELECT pt.*,p.name AS property_name,r.room_type,
+                        s.name AS student_name,s.phone AS student_phone,
+                        o.name AS owner_name
+                 FROM payment_transactions pt
+                 JOIN properties p ON p.id=pt.property_id
+                 JOIN rooms r ON r.id=pt.room_id
+                 JOIN users s ON s.id=pt.student_id
+                 JOIN users o ON o.id=pt.owner_id
+                 WHERE $zoneClause";
+        $pp = $zoneParams;
+        if (!empty($_GET['status'])) { $psql .= ' AND pt.snippe_status=?'; $pp[]=$_GET['status']; }
+        $psql .= ' ORDER BY pt.created_at DESC LIMIT 100';
+        ok(q($psql,$pp));
+    }
+
+    // ── GET /api/admin/payments/:ref ─────────────────────────────
+    if ($method === 'GET' && $sub === 'payments' && $sub2) {
+        $txn = q1("SELECT pt.*,p.name AS property_name,r.room_type,
+                          s.name AS student_name,s.phone AS student_phone
+                   FROM payment_transactions pt
+                   JOIN properties p ON p.id=pt.property_id
+                   JOIN rooms r ON r.id=pt.room_id
+                   JOIN users s ON s.id=pt.student_id
+                   WHERE pt.snippe_ref=?",[$sub2]);
+        if (!$txn) err(404,'Payment not found.');
+        ok($txn);
+    }
+
+    // ─────────────────────────────────────────────────────────────
     err(404, 'Admin route not found.');
 }
 
@@ -1580,11 +3270,50 @@ function routeSms(array $parts, string $method): void {
     err(404, 'SMS route not found.');
 }
 
+// ─── /checkin/:token  — public QR scan page ────────────────────
+function routeCheckin(array $parts, string $method): void {
+    $token = trim($parts[1] ?? '');
+    if (!$token) err(404, 'Not found.');
+    if (!preg_match('/^[0-9a-f]{64}$/', $token)) err(400, 'Invalid check-in code format.');
+
+    // PUT /api/checkin/:token/confirm-movein — staff scans QR and marks tenant as checked in
+    if ($method === 'PUT' && ($parts[2] ?? '') === 'confirm-movein') {
+        $u  = requireStaff();
+        $bk = q1("SELECT id,status FROM bookings WHERE qr_token=?", [$token]);
+        if (!$bk) err(404, 'Booking not found.');
+        if (!in_array($bk['status'], ['active','confirmed','student_confirmed']))
+            err(400, 'QR code is not yet active. Student must confirm their tenancy first.');
+        qn("UPDATE bookings SET status='checked_in' WHERE id=?", [$bk['id']]);
+        ok(['confirmed'=>true,'booking_id'=>$bk['id']]);
+    }
+
+    if ($method !== 'GET') err(405, 'Method not allowed.');
+    $b = q1("SELECT b.id, b.status, b.amount_paid, b.contract_start, b.contract_end,
+                    b.move_in_date, b.created_at, b.payment_receipt_ref, b.payment_note,
+                    b.tenant_photo_url,
+                    s.name AS student_name, s.username AS student_username,
+                    p.name AS property_name, p.area,
+                    r.room_type, r.monthly_price, r.capacity, r.deposit_months,
+                    ru.unit_number, ru.floor AS unit_floor
+             FROM bookings b
+             JOIN users s ON s.id=b.student_id
+             JOIN properties p ON p.id=b.property_id
+             JOIN rooms r ON r.id=b.room_id
+             LEFT JOIN room_units ru ON ru.id=b.room_unit_id
+             WHERE b.qr_token=?", [$token]);
+    if (!$b) err(404, 'Invalid or expired check-in code.');
+    $now    = date('Y-m-d');
+    $active = in_array($b['status'], ['active','confirmed','student_confirmed','checked_in','move_in_completed'])
+           && (!$b['contract_end'] || $b['contract_end'] >= $now);
+    ok(array_merge($b, ['active' => $active]));
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  ROUTER
 // ═══════════════════════════════════════════════════════════════
-$uri    = strtok($_SERVER['REQUEST_URI'], '?');
-$uri    = preg_replace('#^/api#', '', $uri);
+// Support both REQUEST_URI-based routing and PATH_INFO-based routing (api/.htaccess)
+$rawUri = $_SERVER['PATH_INFO'] ?? strtok($_SERVER['REQUEST_URI'], '?');
+$uri    = preg_replace('#^/api(?:/index\.php)?#', '', $rawUri);
 $parts  = array_values(array_filter(explode('/', $uri)));
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -1596,18 +3325,12 @@ if ($method === 'GET' && ($parts[0] ?? '') === 'admin' && in_array($parts[1] ?? 
 
 // ── POST /api/track — public page-view tracker (no auth) ────────
 if ($method === 'POST' && ($parts[0] ?? '') === 'track') {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS page_views (
-        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        page VARCHAR(255) NOT NULL DEFAULT '/',
-        ip_hash CHAR(64) NOT NULL DEFAULT '',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_date (created_at)
-    )");
+    migrate(); // ensures page_views table exists
     $b    = body();
     $page = substr(trim($b['page'] ?? '/'), 0, 255);
     $ip   = $_SERVER['HTTP_CF_CONNECTING_IP'] ?? $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
-    $hash = hash('sha256', $ip . date('Y-m-d'));  // daily rotation for privacy
-    $pdo->prepare("INSERT INTO page_views (page, ip_hash) VALUES (?, ?)")->execute([$page, $hash]);
+    $hash = hash('sha256', $ip . date('Y-m-d'));
+    qn("INSERT INTO page_views (page, ip_hash) VALUES (?, ?)", [$page, $hash]);
     ok(['tracked' => true]);
 }
 
@@ -1623,7 +3346,10 @@ switch ($parts[0] ?? '') {
     case 'properties':   routeProperties($parts, $method); break;
     case 'portal':       routePortal($parts, $method); break;
     case 'student':      routeStudent($parts, $method); break;
+    case 'checkin':      routeCheckin($parts, $method); break;
     case 'sms':          routeSms($parts, $method); break;
     case 'admin':        routeAdmin($parts, $method); break;
+    case 'payments':     routePayments($parts, $method); break;
+    case 'webhooks':     routeWebhooks($parts, $method); break;
     default:             err(404, 'API route not found.');
 }

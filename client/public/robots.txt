@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+# Block staff/private portals from being indexed
+Disallow: /admin/
+Disallow: /portal/
+Disallow: /student/
+Disallow: /checkin/
+
+Sitemap: https://getostudent.co.tz/sitemap.xml

@@ -12,7 +12,7 @@ export default defineConfig({
         name: 'Geto Student',
         short_name: 'Geto',
         description: 'Malazi ya wanafunzi yanayothibitishwa Tanzania',
-        theme_color: '#1a4b8f',
+        theme_color: '#14162B',
         background_color: '#ffffff',
         display: 'standalone',
         orientation: 'portrait',

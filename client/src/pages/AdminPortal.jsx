@@ -1,13 +1,54 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, Routes, Route, Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, Users, MapPin, CheckSquare,
   LogOut, Menu, X, ChevronRight, Eye, Check, XCircle,
   Shield, AlertCircle, Loader2, UserPlus, Map, Plus, ChevronDown as Chevron, Globe,
-  Pencil, Trash2, GraduationCap, Save, ArrowLeft
+  Pencil, Trash2, GraduationCap, Save, ArrowLeft,
+  Layers, BedDouble, UserCheck, Wrench, Grid3X3,
+  Search, SlidersHorizontal, UserCog, CreditCard, CalendarDays,
+  ClipboardList, BadgeCheck, Phone, Mail, AtSign,
+  ChevronLeft, Receipt, BookPlus, UserSearch, Home,
+  Camera, Upload, ImagePlus, SkipForward,
+  Smartphone, SendHorizonal, Clock, CheckCircle2
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
+import { TZ_LOCATIONS } from '../data/tz_locations';
+
+// ─── Simple typeahead for location values ──────────────────────
+function LocTypeahead({ value, onChange, options, placeholder, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState(value || '');
+  const ref = useRef(null);
+  useEffect(() => { setQ(value || ''); }, [value]);
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const filtered = q ? options.filter(o => o.toLowerCase().includes(q.toLowerCase())) : options;
+  const pick = (opt) => { setQ(opt); onChange(opt); setOpen(false); };
+  return (
+    <div ref={ref} className="relative">
+      <input className="input text-sm" value={q} disabled={disabled} autoComplete="off"
+        placeholder={placeholder}
+        onChange={e => { setQ(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)} />
+      {open && filtered.length > 0 && !disabled && (
+        <ul className="absolute z-50 w-full mt-1 max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg text-sm">
+          {filtered.slice(0, 50).map(opt => (
+            <li key={opt} onMouseDown={() => pick(opt)}
+              className="px-3 py-1.5 cursor-pointer hover:bg-primary/10 hover:text-primary text-slate-700">
+              {opt}
+            </li>
+          ))}
+          {filtered.length > 50 && <li className="px-3 py-1.5 text-slate-400 text-xs">Keep typing…</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 // ─── Sidebar nav ───────────────────────────────────────────────
 const ADMIN_NAV = [
@@ -22,13 +63,36 @@ const ADMIN_ONLY_NAV = [
   { path: '/admin/staff',        icon: Shield,        label: 'Zone Managers' },
   { path: '/admin/types',        icon: Plus,          label: 'Property & Room Types' },
 ];
+const ZONE_MANAGER_NAV = [
+  { path: '/admin/staff',        icon: Shield,        label: 'My Geto Officers' },
+];
 
 function Sidebar({ open, onClose }) {
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin, isZoneManager, isGetoManager, logout } = useAuth();
   const navigate = useNavigate();
   const loc = useLocation();
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    if (!isZoneManager || isAdmin) return;
+    const fetch = () =>
+      api.get('/admin/properties', { params: { status: 'pending', limit: 1 } })
+        .then(r => setPendingCount(Array.isArray(r.data) ? r.data.length : 0))
+        .catch(() => {});
+    fetch();
+    // refresh every 2 minutes while sidebar is mounted
+    const t = setInterval(fetch, 120000);
+    return () => clearInterval(t);
+  }, [isZoneManager, isAdmin]);
+
   const handleLogout = () => { logout(); navigate('/admin/login'); };
-  const nav = isAdmin ? [...ADMIN_NAV, ...ADMIN_ONLY_NAV] : ADMIN_NAV;
+  const nav = isAdmin ? [...ADMIN_NAV, ...ADMIN_ONLY_NAV]
+            : isZoneManager ? [...ADMIN_NAV, ...ZONE_MANAGER_NAV]
+            : ADMIN_NAV;
+  const roleLabel = isAdmin ? 'Super Admin'
+    : isZoneManager ? `Zone Manager · ${user?.zone_code||''}`
+    : isGetoManager ? 'Geto Officer'
+    : 'Staff';
   return (
     <>
       {open && <div className="fixed inset-0 bg-black/40 z-30 lg:hidden" onClick={onClose}/>}
@@ -36,12 +100,17 @@ function Sidebar({ open, onClose }) {
         ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
         {/* Header */}
         <div className="px-5 py-5 border-b border-white/10 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-accent flex items-center justify-center font-display font-bold text-white text-lg">G</div>
+          <svg width="36" height="36" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="44" height="44" rx="10" fill="#14162B"/>
+            <path d="M32.5 8.6 A17 17 0 1 0 32.5 35.4 L28.8 30.7 A11 11 0 1 1 28.8 13.3 Z" fill="#2FD48B"/>
+            <circle cx="30.6" cy="11" r="3" fill="#2FD48B"/>
+            <circle cx="30.6" cy="33" r="3" fill="#2FD48B"/>
+            <path d="M36 15 L42 21 L40 21 L40 28 L32 28 L32 21 L30 21 Z" fill="white"/>
+            <rect x="33.5" y="23" width="5" height="5" rx="0.5" fill="#14162B"/>
+          </svg>
           <div>
             <div className="font-display font-bold text-sm leading-none">Geto Admin</div>
-            <div className="text-xs text-white/50 mt-0.5 capitalize">
-              {isAdmin ? 'Super Admin' : `Zone ${user?.zone_code || ''}`}
-            </div>
+            <div className="text-xs text-white/50 mt-0.5">{roleLabel}</div>
           </div>
           <button className="lg:hidden ml-auto text-white/60 hover:text-white" onClick={onClose}><X size={20}/></button>
         </div>
@@ -52,20 +121,32 @@ function Sidebar({ open, onClose }) {
           <div className="text-xs text-white/40 truncate">{user?.email}</div>
         </div>
         {/* Zone badge for zone managers */}
-        {!isAdmin && user?.zone_name && (
+        {isZoneManager && user?.zone_name && (
           <div className="mx-5 mt-3 px-3 py-2 bg-accent/20 rounded-xl text-xs text-accent font-semibold">
             <MapPin size={12} className="inline mr-1"/>Zone {user.zone_code}: {user.zone_name}
+          </div>
+        )}
+        {/* Referral code badge for geto managers */}
+        {isGetoManager && user?.referral_code && (
+          <div className="mx-5 mt-3 px-3 py-2 bg-accent/20 rounded-xl text-xs text-accent font-semibold">
+            <UserCheck size={12} className="inline mr-1"/>Code: {user.referral_code}
           </div>
         )}
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-1">
           {nav.map(({ path, icon: Icon, label }) => {
             const active = loc.pathname === path || (path !== '/admin' && loc.pathname.startsWith(path));
+            const badge = isZoneManager && !isAdmin && path === '/admin/properties' && pendingCount > 0;
             return (
               <Link key={path} to={path} onClick={onClose}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all
                   ${active ? 'bg-white/15 text-white' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}>
                 <Icon size={18}/>{label}
+                {badge && (
+                  <span className="ml-auto bg-amber-400 text-amber-900 text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                    {pendingCount}
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -107,14 +188,86 @@ function StatCard({ label, value, sub, color = 'primary' }) {
 // ─── Pages ────────────────────────────────────────────────────
 
 // Dashboard
+const BOOKING_STATUS_LABEL = {
+  assigned: 'Assigned', payment_pending: 'Awaiting Payment',
+  payment_confirmed: 'Payment Confirmed', active: 'Active',
+  checked_in: 'Checked In', student_confirmed: 'Student Confirmed',
+};
+const BOOKING_STATUS_COLOR = {
+  assigned: 'bg-blue-100 text-blue-700',
+  payment_pending: 'bg-amber-100 text-amber-700',
+  payment_confirmed: 'bg-emerald-100 text-emerald-700',
+  active: 'bg-green-100 text-green-700',
+  checked_in: 'bg-teal-100 text-teal-700',
+  student_confirmed: 'bg-sky-100 text-sky-700',
+};
+
 function Dashboard() {
-  const { isAdmin, user } = useAuth();
+  const { isAdmin, isZoneManager, isGetoManager, user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     api.get('/admin/stats').then(r => { setData(r.data); setLoading(false); }).catch(() => setLoading(false));
   }, []);
   if (loading) return <Spinner />;
+
+  // ── Geto Officer view ─────────────────────────────────────────
+  if (isGetoManager && !isAdmin && !isZoneManager) {
+    const s = data?.officer_summary || {};
+    const bookings = data?.officer_bookings || [];
+    return (
+      <div className="p-5 lg:p-8 space-y-8">
+        <section>
+          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">My Bookings</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <StatCard label="Total Assigned"     value={s.total||0}             />
+            <StatCard label="Assigned"           value={s.assigned||0}          color="primary" />
+            <StatCard label="Awaiting Payment"   value={s.payment_pending||0}   color="amber" />
+            <StatCard label="Payment Confirmed"  value={s.payment_confirmed||0} color="green" />
+            <StatCard label="Active"             value={s.active||0}            color="green" />
+            <StatCard label="Checked In"         value={s.checked_in||0}        color="primary" />
+            <StatCard label="Closed"             value={s.closed||0}            />
+          </div>
+        </section>
+        {bookings.length > 0 && (
+          <section>
+            <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Active Bookings</h3>
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>{['Student','Phone','Property','Room','Move-in','Status'].map(h=>(
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {bookings.map(b => (
+                    <tr key={b.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-semibold text-slate-800">{b.student_name}</td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{b.student_phone}</td>
+                      <td className="px-4 py-3 text-slate-700">{b.property_name}<span className="text-slate-400 text-xs ml-1">· {b.area}</span></td>
+                      <td className="px-4 py-3 text-slate-600 text-xs">{b.room_type}<br/><span className="text-slate-400">TZS {Number(b.monthly_price).toLocaleString()}/mo</span></td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{b.move_in_date ? new Date(b.move_in_date).toLocaleDateString() : '—'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${BOOKING_STATUS_COLOR[b.status]||'bg-slate-100 text-slate-600'}`}>
+                          {BOOKING_STATUS_LABEL[b.status]||b.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+        {bookings.length === 0 && (
+          <div className="text-center py-16 text-slate-400">
+            <CheckSquare size={40} className="mx-auto mb-3 opacity-30"/>
+            <p className="text-sm">No active bookings assigned to you yet.</p>
+          </div>
+        )}
+      </div>
+    );
+  }
   const g = data?.global;
   return (
     <div className="p-5 lg:p-8 space-y-8">
@@ -142,6 +295,7 @@ function Dashboard() {
             <StatCard label="All Bookings"     value={g.total_bookings}         sub={`${g.confirmed_bookings} confirmed`} />
             <StatCard label="All Rooms"        value={g.total_rooms}            sub={`${g.occupied_rooms} occupied`} color="accent" />
             <StatCard label="Zone Managers"    value={g.total_zone_managers}    />
+            <StatCard label="Geto Officers"    value={g.total_geto_officers}    />
             <StatCard label="Site Visits (Today)" value={data?.visits_today ?? '—'} color="green" />
             <StatCard label="Site Visits (Total)" value={data?.visits_total ?? '—'} color="primary" />
           </div>
@@ -205,21 +359,93 @@ function Dashboard() {
           </div>
         </section>
       ) : (
-        <section>
-          <h3 className="font-display font-bold text-lg text-slate-900 mb-4">
-            Zone {user?.zone_code} — {user?.zone_name}
-          </h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {data?.my_zone && <>
-              <StatCard label="Total Properties" value={data.my_zone.total}         />
-              <StatCard label="Approved"         value={data.my_zone.approved}    color="green" />
-              <StatCard label="Verified"         value={data.my_zone.verified}   color="primary" />
-              <StatCard label="Total Rooms"      value={data.my_zone.total_rooms}   />
-              <StatCard label="Occupied"         value={data.my_zone.occupied}      color="amber" />
-              <StatCard label="Bookings"         value={data.my_zone.total_bookings} />
-            </>}
-          </div>
-        </section>
+        <>
+          {/* Pending properties alert */}
+          {(data?.my_zone?.pending_properties || 0) > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded-2xl px-5 py-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="font-bold text-amber-800 text-sm">{data.my_zone.pending_properties} propert{data.my_zone.pending_properties===1?'y':'ies'} pending in your zone</p>
+                <p className="text-amber-700 text-xs mt-0.5">Newly listed properties waiting for review.</p>
+              </div>
+              <a href="/admin/properties" className="btn-sm bg-amber-600 text-white hover:bg-amber-700 text-xs shrink-0">View Properties</a>
+            </div>
+          )}
+
+          {/* Zone stats */}
+          <section>
+            <h3 className="font-display font-bold text-lg text-slate-900 mb-4">
+              Zone {user?.zone_code} — {user?.zone_name}
+            </h3>
+            {data?.my_zone && (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                <StatCard label="Properties"      value={data.my_zone.total}              />
+                <StatCard label="Approved"         value={data.my_zone.approved}           color="green" />
+                <StatCard label="Verified"         value={data.my_zone.verified}           color="primary" />
+                <StatCard label="Pending"          value={data.my_zone.pending_properties} color="amber" />
+                <StatCard label="Total Rooms"      value={data.my_zone.total_rooms}        />
+                <StatCard label="Occupied"         value={data.my_zone.occupied}           color="amber"   sub={data.my_zone.total_rooms>0?`${Math.round((data.my_zone.occupied/data.my_zone.total_rooms)*100)}% occupancy`:undefined} />
+                <StatCard label="All Bookings"     value={data.my_zone.total_bookings}     sub={`${data.my_zone.active_bookings||0} active`} />
+                <StatCard label="Confirmed"        value={data.my_zone.confirmed_bookings} color="green" />
+                <StatCard label="Geto Officers"    value={data.my_zone.geto_officers}      color="primary" />
+              </div>
+            )}
+          </section>
+
+          {/* Geto Officers table */}
+          {(data?.officer_stats||[]).length > 0 && (
+            <section>
+              <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Geto Officers</h3>
+              <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>{['Name','Phone','Active Bookings','Total Bookings'].map(h=>(
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(data.officer_stats).map(o => (
+                      <tr key={o.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-semibold text-slate-800">{o.name}</td>
+                        <td className="px-4 py-3 text-slate-500 text-xs">{o.phone}</td>
+                        <td className="px-4 py-3 font-bold text-primary">{o.active_bookings||0}</td>
+                        <td className="px-4 py-3 text-slate-500">{o.total_bookings||0}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* Pending properties list */}
+          {(data?.pending_props||[]).length > 0 && (
+            <section>
+              <h3 className="font-display font-bold text-lg text-slate-900 mb-4">Pending Properties</h3>
+              <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>{['Property','Area','Owner','Listed'].map(h=>(
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(data.pending_props).map(p => (
+                      <tr key={p.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-semibold text-slate-800">{p.name}</td>
+                        <td className="px-4 py-3 text-slate-500 text-xs">
+                          <div>{p.area}</div>
+                          {(p.ward||p.district) && <div className="text-slate-400">{[p.ward,p.district].filter(Boolean).join(', ')}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-slate-500">{p.owner_name||'—'}</td>
+                        <td className="px-4 py-3 text-slate-400 text-xs">{new Date(p.created_at).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </>
       )}
     </div>
   );
@@ -227,24 +453,46 @@ function Dashboard() {
 
 // Properties
 function PropertiesList() {
-  const { isAdmin, isZoneManager } = useAuth();
-  const [props, setProps]     = useState([]);
-  const [filter, setFilter]   = useState('pending');
-  const [loading, setLoading] = useState(true);
-  const [addOpen, setAddOpen] = useState(false);
+  const { isAdmin } = useAuth();
+  const [all, setAll]           = useState([]);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [verifiedFilter, setVerifiedFilter] = useState(''); // '' | '1' | '0'
+  const [q, setQ]               = useState('');
+  const [uniFilter, setUniFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [loading, setLoading]   = useState(true);
+  const [addOpen, setAddOpen]   = useState(false);
+  const [unis, setUnis]         = useState([]);
+  const [types, setTypes]       = useState([]);
+
+  useEffect(() => {
+    api.get('/universities').then(r => setUnis(r.data)).catch(() => {});
+    api.get('/admin/property-types').then(r => setTypes(r.data)).catch(() => {});
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
-    api.get('/admin/properties', { params: { status: filter || undefined } })
-      .then(r => { setProps(r.data); setLoading(false); }).catch(() => setLoading(false));
-  }, [filter]);
+    const params = {};
+    if (statusFilter) params.status = statusFilter;
+    if (verifiedFilter !== '') params.verified = verifiedFilter;
+    api.get('/admin/properties', { params })
+      .then(r => { setAll(r.data); setLoading(false); }).catch(() => setLoading(false));
+  }, [statusFilter, verifiedFilter]);
 
   useEffect(() => { load(); }, [load]);
 
-  const approve = async (id) => {
-    await api.put(`/admin/properties/${id}/approve`);
-    load();
-  };
+  const filtered = all.filter(p => {
+    if (q) {
+      const lq = q.toLowerCase();
+      if (![p.name, p.area, p.owner_name, p.owner_phone, p.zone_code, p.university_name]
+          .some(v => (v||'').toLowerCase().includes(lq))) return false;
+    }
+    if (uniFilter && String(p.university_id) !== uniFilter) return false;
+    if (typeFilter && (p.property_type||'').toLowerCase() !== typeFilter.toLowerCase()) return false;
+    return true;
+  });
+
+  const approve = async (id) => { await api.put(`/admin/properties/${id}/approve`); load(); };
   const reject = async (id) => {
     const note = prompt('Reason for rejection:');
     if (!note) return;
@@ -269,41 +517,92 @@ function PropertiesList() {
     load();
   };
 
+  const activeFilters = [q, uniFilter, typeFilter, verifiedFilter].filter(Boolean).length;
+
   return (
     <div className="p-5 lg:p-8">
-      {/* Filters + Add button */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div className="flex flex-wrap gap-2">
-        {['','pending','approved','rejected'].map(s => (
-          <button key={s} onClick={() => setFilter(s)}
-            className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${filter===s?'bg-primary text-white':'bg-white border border-slate-200 text-slate-600 hover:border-primary'}`}>
-            {s===''?'All':s==='pending'?'Pending':s==='approved'?'Approved':'Rejected'}
-          </button>
-        ))}
-        </div>
+      {/* Top bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 className="font-display font-bold text-lg text-slate-900">Properties
+          <span className="ml-2 text-sm font-normal text-slate-400">{filtered.length} of {all.length}</span>
+        </h2>
         <button onClick={() => setAddOpen(true)} className="btn-primary text-sm shrink-0"><Plus size={15}/>Add Property</button>
       </div>
+
+      {/* Filter bar */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 mb-5 space-y-3">
+        {/* Row 1: search + verified toggle */}
+        <div className="flex flex-wrap gap-3">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"/>
+            <input className="input pl-8 text-sm" value={q} onChange={e=>setQ(e.target.value)}
+              placeholder="Search name, area, owner, zone…"/>
+          </div>
+          <select className="input text-sm w-48" value={uniFilter} onChange={e=>setUniFilter(e.target.value)}>
+            <option value="">All Universities</option>
+            {unis.map(u => <option key={u.id} value={u.id}>{u.short_name || u.name}</option>)}
+          </select>
+          <select className="input text-sm w-44" value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
+            <option value="">All Types</option>
+            {types.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+          </select>
+        </div>
+
+        {/* Row 2: status pills + verified pills + clear */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-400 font-semibold uppercase tracking-wide mr-1">Status:</span>
+          {[['','All'],['pending','Pending'],['approved','Approved'],['rejected','Rejected']].map(([s,lbl]) => (
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${statusFilter===s?'bg-primary text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              {lbl}
+            </button>
+          ))}
+          <span className="w-px h-4 bg-slate-200 mx-1"/>
+          <span className="text-xs text-slate-400 font-semibold uppercase tracking-wide mr-1">Verified:</span>
+          {[['','All'],['1','Verified'],['0','Unverified']].map(([v,lbl]) => (
+            <button key={v} onClick={() => setVerifiedFilter(v)}
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${verifiedFilter===v?'bg-green-600 text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              {lbl}
+            </button>
+          ))}
+          {activeFilters > 0 && (
+            <button onClick={() => { setQ(''); setUniFilter(''); setTypeFilter(''); setVerifiedFilter(''); }}
+              className="ml-auto text-xs text-red-500 hover:text-red-700 font-semibold flex items-center gap-1">
+              <X size={12}/> Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
       {!isAdmin && (
-        <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-700 font-medium flex items-center gap-2">
-          <span>Properties you add will require Admin approval before being published.</span>
+        <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-700 font-medium">
+          Properties you add will require Admin approval before being published.
         </div>
       )}
       {addOpen && <AddPropertyModal onClose={() => setAddOpen(false)} onSaved={load} />}
       {loading ? <Spinner /> : (
         <div className="space-y-3">
-          {props.length === 0 && <EmptyState label="No properties" />}
-          {props.map(p => (
-            <div key={p.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col md:flex-row md:items-center gap-4">
-              {p.main_photo && <img src={p.main_photo} alt="" className="w-full md:w-24 h-20 object-cover rounded-xl shrink-0" />}
+          {filtered.length === 0 && <EmptyState label={all.length ? 'No properties match your filters' : 'No properties'} />}
+          {filtered.map(p => (
+            <div key={p.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col md:flex-row md:items-start gap-4">
+              {p.main_photo
+                ? <img src={p.main_photo} alt="" className="w-full md:w-24 h-20 object-cover rounded-xl shrink-0"/>
+                : <div className="hidden md:flex w-24 h-20 rounded-xl bg-slate-100 items-center justify-center shrink-0"><Building2 size={24} className="text-slate-300"/></div>
+              }
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-slate-900 truncate">{p.name}</span>
+                  <span className="font-semibold text-slate-900">{p.name}</span>
                   {p.verified ? <span className="badge-green">Verified</span> : null}
                   <StatusBadge status={p.status} />
+                  {p.property_type && <span className="badge badge-blue">{p.property_type}</span>}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">{p.area} · {p.university_name}</div>
-                <div className="text-xs text-slate-400">Owner: {p.owner_name} · {p.owner_phone} · Zone {p.zone_code||'—'}</div>
-                <div className="text-xs text-slate-400">Rooms: {p.total_rooms||0} · Occupied: {p.occupied||0}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{p.area} · {p.university_name} · Zone {p.zone_code||'—'}</div>
+                <div className="text-xs text-slate-400 mt-0.5">Owner: <span className="text-slate-600 font-medium">{p.owner_name}</span> · {p.owner_phone}</div>
+                <div className="flex gap-4 mt-1.5 text-xs text-slate-400">
+                  <span>{p.room_types||0} room type{p.room_types!==1?'s':''}</span>
+                  <span>{p.total_rooms||0} total rooms</span>
+                  <span className={p.occupied > 0 ? 'text-green-600 font-medium' : ''}>{p.occupied||0} occupied</span>
+                </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap shrink-0">
                 {p.status === 'pending' && <>
@@ -314,7 +613,7 @@ function PropertiesList() {
                   <button onClick={() => verify(p.id)} className="btn-sm bg-primary text-white hover:bg-primary/80"><Shield size={13}/>Verify</button>
                 )}
                 {p.verified && (
-                  <button onClick={() => unverify(p.id)} className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Remove Verification</button>
+                  <button onClick={() => unverify(p.id)} className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Unverify</button>
                 )}
                 <button onClick={() => deleteProp(p.id)} className="btn-sm border border-red-200 text-red-500 hover:bg-red-50"><Trash2 size={13}/></button>
                 <Link to={`/admin/properties/${p.id}`} className="btn-sm border border-slate-200 text-slate-600 hover:border-primary hover:text-primary"><Eye size={13}/>View</Link>
@@ -332,19 +631,23 @@ function AddPropertyModal({ onClose, onSaved }) {
   const [unis, setUnis]         = useState([]);
   const [zones, setZones]       = useState([]);
   const [clusters, setClust]    = useState([]);
-  const [step, setStep]         = useState(1); // 1=info, 2=owner, 3=rooms
+  const [step, setStep]         = useState(1); // 1=info, 2=owner, 3=rooms, 4=photos
   const [propId, setPropId]     = useState(null);
   const [err, setErr]           = useState('');
   const [saving, setSaving]     = useState(false);
   const [rooms, setRooms]       = useState([]);
-  const [selectedUnis, setSelUnis] = useState([]); // multiple universities
+  const [photoFiles, setPhotoFiles]       = useState([]);
+  const [photoPreviews, setPhotoPreviews] = useState([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [selectedUnis, setSelUnis] = useState([]);
+  const [uniSearch, setUniSearch] = useState('');
 
   // Owner section
   const [ownerMode, setOwnerMode]   = useState('search'); // 'search' | 'create'
   const [ownerSearch, setOwnerSearch] = useState('');
   const [ownerResults, setOwnerResults] = useState([]);
   const [selectedOwner, setSelOwner]  = useState(null);
-  const [ownerForm, setOwnerForm] = useState({ name:'', email:'', phone:'', password:'', business_name:'' });
+  const [ownerForm, setOwnerForm] = useState({ name:'', email:'', phone:'', password:'', business_name:'', role:'property_owner' });
 
   const [f, setF] = useState({
     name:'', property_type:'Hostel', description:'', address:'', landmark:'', area:'',
@@ -356,7 +659,7 @@ function AddPropertyModal({ onClose, onSaved }) {
   const [idFront, setIdFront] = useState(null);
   const [idBack,  setIdBack]  = useState(null);
   const [rf, setRf] = useState({
-    room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1',
+    room_type:'Single', monthly_price:'', deposit_months:'1', capacity:'1',
     total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared', description:'',
   });
 
@@ -375,9 +678,11 @@ function AddPropertyModal({ onClose, onSaved }) {
   useEffect(() => {
     if (ownerSearch.length < 2) { setOwnerResults([]); return; }
     const t = setTimeout(() => {
-      api.get('/admin/users', { params: { role: 'property_owner', q: ownerSearch } })
-        .then(r => setOwnerResults(r.data)).catch(() => {});
-    }, 400);
+      // search both property_owner and property_manager by name or phone
+      api.get('/admin/users/search', { params: { q: ownerSearch } })
+        .then(r => setOwnerResults(r.data.filter(u => ['property_owner','property_manager'].includes(u.role))))
+        .catch(() => {});
+    }, 300);
     return () => clearTimeout(t);
   }, [ownerSearch]);
 
@@ -428,8 +733,8 @@ function AddPropertyModal({ onClose, onSaved }) {
     try {
       let ownerId = selectedOwner?.id || null;
       if (ownerMode === 'create') {
-        if (!ownerForm.name || !ownerForm.email || !ownerForm.phone || !ownerForm.password) {
-          setErr('Please fill all owner details.'); setSaving(false); return;
+        if (!ownerForm.name || !ownerForm.phone || !ownerForm.password) {
+          setErr('Name, phone, and password are required for the owner.'); setSaving(false); return;
         }
         const r = await api.post('/admin/users/owner', ownerForm);
         ownerId = r.data.id;
@@ -455,7 +760,7 @@ function AddPropertyModal({ onClose, onSaved }) {
       await api.post(`/admin/properties/${propId}/rooms`, payload);
       const r = await api.get(`/admin/properties/${propId}`);
       setRooms(r.data.rooms || []);
-      setRf({ room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared', description:'' });
+      setRf({ room_type:'Single', monthly_price:'', deposit_months:'1', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared', description:'' });
     } catch (e) { setErr(e.response?.data?.message || 'An error occurred.'); }
     finally { setSaving(false); }
   };
@@ -482,7 +787,7 @@ function AddPropertyModal({ onClose, onSaved }) {
         <div className="p-6 overflow-y-auto max-h-[70vh]">
           {/* Step indicator */}
           <div className="flex items-center gap-2 mb-6 text-xs font-semibold">
-            {[['1','Details'],['2','Owner'],['3','Rooms']].map(([n,label],i) => (
+            {[['1','Details'],['2','Owner'],['3','Rooms'],['4','Photos']].map(([n,label],i) => (
               <React.Fragment key={n}>
                 {i>0 && <div className="flex-1 h-px bg-slate-200"/>}
                 <span className={`w-6 h-6 rounded-full flex items-center justify-center ${step>i?'bg-primary text-white':'bg-slate-200 text-slate-500'}`}>{n}</span>
@@ -511,11 +816,13 @@ function AddPropertyModal({ onClose, onSaved }) {
                     {unis.map(u => <option key={u.id} value={u.id}>{u.name} ({u.short_name})</option>)}
                   </select>
                 </div>
-                {/* Multi-uni selector */}
+                {/* Multi-uni selector with search */}
                 <div className="col-span-2">
-                  <label className="label">Other Nearby Universities (select multiple)</label>
+                  <label className="label">Universities eligible to rent here (select all that apply)</label>
+                  <p className="text-xs text-slate-400 mb-1.5">Students from selected universities can see and book this property</p>
+                  <input className="input mb-2 text-sm" value={uniSearch} onChange={e=>setUniSearch(e.target.value)} placeholder="Search universities…" />
                   <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 bg-slate-50 rounded-xl border border-slate-200">
-                    {unis.map(u => {
+                    {unis.filter(u => !uniSearch || u.name.toLowerCase().includes(uniSearch.toLowerCase()) || (u.short_name||'').toLowerCase().includes(uniSearch.toLowerCase())).map(u => {
                       const sel = selectedUnis.includes(String(u.id));
                       return (
                         <button key={u.id} type="button" onClick={() => toggleUni(u.id)}
@@ -525,7 +832,7 @@ function AddPropertyModal({ onClose, onSaved }) {
                       );
                     })}
                   </div>
-                  {selectedUnis.length > 0 && <p className="text-xs text-primary mt-1">{selectedUnis.length} university selected</p>}
+                  {selectedUnis.length > 0 && <p className="text-xs text-primary mt-1">{selectedUnis.length} {selectedUnis.length===1?'university':'universities'} selected</p>}
                 </div>
                 <div>
                   <label className="label">Zone</label>
@@ -617,7 +924,7 @@ function AddPropertyModal({ onClose, onSaved }) {
                           className={`px-4 py-3 cursor-pointer hover:bg-slate-50 flex items-center justify-between ${selectedOwner?.id===o.id?'bg-primary/5':''}`}>
                           <div>
                             <p className="font-semibold text-sm text-slate-800">{o.name}</p>
-                            <p className="text-xs text-slate-500">{o.phone} · {o.email}</p>
+                            <p className="text-xs text-slate-500">{o.phone}{o.email ? ` · ${o.email}` : ''}</p>
                           </div>
                           {selectedOwner?.id===o.id && <Check size={15} className="text-primary"/>}
                         </div>
@@ -629,7 +936,7 @@ function AddPropertyModal({ onClose, onSaved }) {
                       <Check size={15} className="text-green-600 shrink-0"/>
                       <div>
                         <p className="font-semibold text-sm text-green-800">{selectedOwner.name}</p>
-                        <p className="text-xs text-green-600">{selectedOwner.phone} · {selectedOwner.email}</p>
+                        <p className="text-xs text-green-600">{selectedOwner.phone}{selectedOwner.email ? ` · ${selectedOwner.email}` : ''}</p>
                       </div>
                       <button type="button" onClick={()=>{setSelOwner(null);setOwnerSearch('');}} className="ml-auto text-slate-400 hover:text-red-500"><X size={14}/></button>
                     </div>
@@ -642,23 +949,30 @@ function AddPropertyModal({ onClose, onSaved }) {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2">
                     <label className="label">Owner Name *</label>
-                    <input className="input" value={ownerForm.name} onChange={e=>setOwnerForm(p=>({...p,name:e.target.value}))} required />
-                  </div>
-                  <div>
-                    <label className="label">Email *</label>
-                    <input className="input" type="email" value={ownerForm.email} onChange={e=>setOwnerForm(p=>({...p,email:e.target.value}))} required />
+                    <input className="input" value={ownerForm.name} onChange={e=>setOwnerForm(p=>({...p,name:e.target.value}))} required placeholder="Full name" />
                   </div>
                   <div>
                     <label className="label">Phone *</label>
-                    <input className="input" value={ownerForm.phone} onChange={e=>setOwnerForm(p=>({...p,phone:e.target.value}))} required />
+                    <input className="input" value={ownerForm.phone} onChange={e=>setOwnerForm(p=>({...p,phone:e.target.value}))} required placeholder="+255 700 000 000" />
                   </div>
                   <div>
-                    <label className="label">Business Name</label>
-                    <input className="input" value={ownerForm.business_name} onChange={e=>setOwnerForm(p=>({...p,business_name:e.target.value}))} />
+                    <label className="label">Email <span className="text-slate-400 font-normal">(optional)</span></label>
+                    <input className="input" type="email" value={ownerForm.email} onChange={e=>setOwnerForm(p=>({...p,email:e.target.value}))} placeholder="owner@email.com" />
+                  </div>
+                  <div>
+                    <label className="label">Account Type</label>
+                    <select className="input" value={ownerForm.role} onChange={e=>setOwnerForm(p=>({...p,role:e.target.value}))}>
+                      <option value="property_owner">Property Owner</option>
+                      <option value="property_manager">Property Manager</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Business Name <span className="text-slate-400 font-normal">(optional)</span></label>
+                    <input className="input" value={ownerForm.business_name} onChange={e=>setOwnerForm(p=>({...p,business_name:e.target.value}))} placeholder="e.g. Amani Properties" />
                   </div>
                   <div>
                     <label className="label">Initial Password *</label>
-                    <input className="input" type="password" value={ownerForm.password} onChange={e=>setOwnerForm(p=>({...p,password:e.target.value}))} required minLength={6} />
+                    <input className="input" type="password" value={ownerForm.password} onChange={e=>setOwnerForm(p=>({...p,password:e.target.value}))} required minLength={8} placeholder="Min 8 characters" />
                   </div>
                   {/* National ID upload — optional */}
                   <div className="col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
@@ -721,9 +1035,16 @@ function AddPropertyModal({ onClose, onSaved }) {
                     <label className="label">Price/month (TZS) *</label>
                     <input className="input" type="number" value={rf.monthly_price} onChange={e=>setRf(p=>({...p,monthly_price:e.target.value}))} required placeholder="150000" />
                   </div>
-                  <div className="col-span-2">
-                    <label className="label">Deposit / Terms (optional)</label>
-                    <input className="input" value={rf.deposit_note} onChange={e=>setRf(p=>({...p,deposit_note:e.target.value}))} placeholder="e.g. 3 months rent required before moving in" />
+                  <div>
+                    <label className="label">Deposit (months of rent)</label>
+                    <input className="input" type="number" min="1" max="12" value={rf.deposit_months} onChange={e=>setRf(p=>({...p,deposit_months:e.target.value}))} placeholder="1" />
+                  </div>
+                  <div className="flex items-end pb-1">
+                    <p className="text-xs text-slate-500">
+                      {rf.monthly_price && rf.deposit_months
+                        ? <>Deposit = <span className="font-semibold text-primary">TZS {(Number(rf.monthly_price)*Number(rf.deposit_months)).toLocaleString()}</span></>
+                        : 'Enter price first'}
+                    </p>
                   </div>
                   <div>
                     <label className="label">Total Rooms</label>
@@ -756,7 +1077,73 @@ function AddPropertyModal({ onClose, onSaved }) {
 
               <div className="flex justify-between pt-2">
                 <button onClick={() => setStep(1)} className="btn-ghost text-sm"><ArrowLeft size={14}/> Back</button>
-                <button onClick={() => { onSaved(); onClose(); }} className="btn-primary text-sm"><Check size={14}/> Finish</button>
+                <button onClick={() => setStep(4)} className="btn-primary text-sm">Add Photos →</button>
+              </div>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="space-y-5">
+              <div>
+                <p className="font-semibold text-slate-800 mb-1">Property Photos</p>
+                <p className="text-xs text-slate-500 mb-4">Upload up to 10 real interior and exterior photos. Students see these in a story-format gallery. JPG, PNG, WebP accepted — converted to WebP automatically.</p>
+
+                {/* Drop zone */}
+                <label className="block border-2 border-dashed border-slate-300 hover:border-accent-500 rounded-2xl p-6 text-center cursor-pointer transition-colors bg-slate-50 hover:bg-accent-50">
+                  <input
+                    type="file" accept="image/*" multiple className="hidden"
+                    onChange={e => {
+                      const files = Array.from(e.target.files).slice(0, 10);
+                      setPhotoFiles(files);
+                      setPhotoPreviews(files.map(f => URL.createObjectURL(f)));
+                    }}
+                  />
+                  <div className="text-3xl mb-2">📸</div>
+                  <p className="text-sm font-semibold text-slate-700">Tap to select photos</p>
+                  <p className="text-xs text-slate-400 mt-1">Up to 10 photos · Max 8 MB each</p>
+                </label>
+
+                {/* Previews */}
+                {photoPreviews.length > 0 && (
+                  <div className="mt-4 grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {photoPreviews.map((url, i) => (
+                      <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-slate-200">
+                        <img src={url} alt={`Preview ${i + 1}`} className="w-full h-full object-cover" />
+                        {i === 0 && (
+                          <span className="absolute bottom-1 left-1 text-[10px] bg-primary text-white px-1.5 py-0.5 rounded font-semibold">MAIN</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
+
+              <div className="flex justify-between pt-2">
+                <button onClick={() => setStep(3)} className="btn-ghost text-sm"><ArrowLeft size={14}/> Back</button>
+                <div className="flex gap-2">
+                  <button onClick={() => { onSaved(); onClose(); }} className="btn-ghost text-sm border border-slate-200">
+                    Skip
+                  </button>
+                  <button
+                    disabled={uploadingPhotos || !photoFiles.length}
+                    onClick={async () => {
+                      if (!photoFiles.length) { onSaved(); onClose(); return; }
+                      setUploadingPhotos(true);
+                      const fd = new FormData();
+                      photoFiles.forEach(f => fd.append('photos', f));
+                      try {
+                        await api.post(`/admin/properties/${propId}/photos`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                      } catch (e) { /* property already saved — photos are optional */ }
+                      finally { setUploadingPhotos(false); }
+                      onSaved(); onClose();
+                    }}
+                    className="btn-primary text-sm"
+                  >
+                    {uploadingPhotos ? 'Uploading…' : <><Check size={14}/> Upload & Finish</>}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -798,7 +1185,7 @@ function RoomRow({ r, fmt, onEdit, onDel, onReload }) {
           <span className="text-xs text-slate-400 ml-2">· {r.furnished?'Furnished':'Unfurnished'} · {r.bathroom_type} bath · Capacity {r.capacity}</span>
           <div className="text-xs text-slate-500 mt-0.5">
             <span className="font-semibold text-primary">TZS {fmt(r.monthly_price)}/mo</span>
-            {r.deposit_note && <span className="ml-2 text-slate-400">· {r.deposit_note}</span>}
+            {r.deposit_months && <span className="ml-2 text-slate-400">· Deposit: {r.deposit_months}mo = TZS {fmt(r.monthly_price * r.deposit_months)}</span>}
             <span className="ml-2">· {(r.available??r.available_count??r.total_count)} / {r.total_count} available</span>
             <button onClick={() => setOpen(v=>!v)} className="ml-3 text-accent-600 hover:underline text-[11px]">
               {(r.photos?.length||0)} picha · {(r.videos?.length||0)} video {open?'▲':'▼'}
@@ -872,7 +1259,7 @@ function PropertyDetail() {
   const [addRoomOpen, setAddRoom] = useState(false);
   const [editRoom, setEditRoom]   = useState(null);
   const [saving, setSaving]       = useState(false);
-  const [rf, setRf] = useState({ room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared' });
+  const [rf, setRf] = useState({ room_type:'Single', monthly_price:'', deposit_months:'1', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared' });
 
   const load = useCallback(() => {
     setLoading(true);
@@ -911,7 +1298,7 @@ function PropertyDetail() {
   const startEdit = (r) => {
     const avail = r.available !== undefined ? r.available : (r.total_count - (r.occupied_count||0));
     setRf({ room_type:r.room_type, monthly_price:r.monthly_price,
-            deposit_note:r.deposit_note||'', capacity:r.capacity,
+            deposit_months:r.deposit_months||1, capacity:r.capacity,
             total_count:r.total_count, available_count: avail,
             furnished:!!r.furnished, bathroom_type:r.bathroom_type });
     setEditRoom(r); setAddRoom(true);
@@ -936,9 +1323,18 @@ function PropertyDetail() {
           </button>
           <h2 className="font-display font-bold text-xl text-slate-900">{prop.name}</h2>
           <p className="text-sm text-slate-500 mt-0.5">{prop.area} · {prop.university_name} · Zone {prop.zone_code||'—'}</p>
+          {(prop.region || prop.district || prop.ward) && (
+            <p className="text-xs text-slate-400 mt-0.5">
+              {[prop.ward, prop.district, prop.region].filter(Boolean).join(', ')}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
           <StatusBadge status={prop.status} />
+          <button onClick={() => navigate(`/admin/properties/${propId}/occupancy`)}
+            className="btn-sm border border-primary text-primary hover:bg-primary hover:text-white bg-white">
+            <Grid3X3 size={13}/>Occupancy Grid
+          </button>
           {prop.verified
             ? <button onClick={async()=>{if(!confirm('Remove the "Geto Verified" badge?'))return;await api.put(`/admin/properties/${propId}/unverify`);load();}}
                 className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Remove Verification</button>
@@ -1016,7 +1412,7 @@ function PropertyDetail() {
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <h4 className="font-semibold text-slate-800 text-sm">Room Types ({prop.rooms?.length || 0})</h4>
-          <button onClick={() => { setEditRoom(null); setRf({ room_type:'Single', monthly_price:'', deposit_note:'', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared' }); setAddRoom(v=>!v); }}
+          <button onClick={() => { setEditRoom(null); setRf({ room_type:'Single', monthly_price:'', deposit_months:'1', capacity:'1', total_count:'1', available_count:'1', furnished:false, bathroom_type:'Shared' }); setAddRoom(v=>!v); }}
             className="btn-sm bg-primary text-white hover:bg-primary/90"><Plus size={13}/>Add Room</button>
         </div>
 
@@ -1035,9 +1431,16 @@ function PropertyDetail() {
                 <label className="label">Price/month (TZS)</label>
                 <input className="input" type="number" value={rf.monthly_price} onChange={e=>setRf(p=>({...p,monthly_price:e.target.value}))} required />
               </div>
-              <div className="col-span-2 sm:col-span-3">
-                <label className="label">Deposit / Terms (optional)</label>
-                <input className="input" value={rf.deposit_note} onChange={e=>setRf(p=>({...p,deposit_note:e.target.value}))} placeholder="e.g. 3 months rent before moving in" />
+              <div>
+                <label className="label">Deposit (months of rent)</label>
+                <input className="input" type="number" min="1" max="12" value={rf.deposit_months} onChange={e=>setRf(p=>({...p,deposit_months:e.target.value}))} placeholder="1" />
+              </div>
+              <div className="flex items-end pb-1">
+                <p className="text-xs text-slate-500">
+                  {rf.monthly_price && rf.deposit_months
+                    ? <>Deposit = <span className="font-semibold text-primary">TZS {(Number(rf.monthly_price)*Number(rf.deposit_months)).toLocaleString()}</span></>
+                    : 'Enter price to calculate'}
+                </p>
               </div>
               <div>
                 <label className="label">Total Rooms</label>
@@ -1118,6 +1521,10 @@ function UsersList() {
   const [users, setUsers]   = useState([]);
   const [role, setRole]     = useState('property_owner');
   const [loading, setLoading] = useState(true);
+  const [ofForm, setOfForm] = useState({ name:'', phone:'', email:'', password:'', zone_id:'' });
+  const [ofErr, setOfErr]   = useState('');
+  const [ofSub, setOfSub]   = useState(false);
+  const [zones, setZones]   = useState([]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1126,6 +1533,10 @@ function UsersList() {
   }, [role]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (role === 'geto_officer' && zones.length === 0)
+      api.get('/zones').then(r => setZones(r.data)).catch(()=>{});
+  }, [role]);
 
   const verify = async (id) => {
     await api.put(`/admin/users/${id}/verify`);
@@ -1136,17 +1547,49 @@ function UsersList() {
     await api.put(`/admin/users/${id}/suspend`);
     load();
   };
+  const createOfficer = async (e) => {
+    e.preventDefault(); setOfErr(''); setOfSub(true);
+    try {
+      await api.post('/admin/users/geto-officer', ofForm);
+      setOfForm({ name:'', phone:'', email:'', password:'', zone_id:'' });
+      load();
+    } catch(e) { setOfErr(e.response?.data?.message || 'An error occurred.'); }
+    finally { setOfSub(false); }
+  };
 
   return (
     <div className="p-5 lg:p-8">
       <div className="flex flex-wrap gap-2 mb-5">
-        {['student','property_owner','property_manager','zone_manager'].map(r => (
+        {['student','property_owner','property_manager','geto_officer','zone_manager'].map(r => (
           <button key={r} onClick={() => setRole(r)}
             className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${role===r?'bg-primary text-white':'bg-white border border-slate-200 text-slate-600 hover:border-primary'}`}>
-            {r==='student'?'Students':r==='property_owner'?'Owners':r==='property_manager'?'Managers':r==='zone_manager'?'Zone Managers':'All'}
+            {r==='student'?'Students':r==='property_owner'?'Owners':r==='property_manager'?'Managers':r==='geto_officer'?'Geto Officers':r==='zone_manager'?'Zone Managers':'All'}
           </button>
         ))}
       </div>
+      {role === 'geto_officer' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-5 max-w-lg">
+          <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2"><UserPlus size={16}/>Create Geto Officer</h3>
+          <form onSubmit={createOfficer} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="label">Name *</label><input className="input" required value={ofForm.name} onChange={e=>setOfForm(p=>({...p,name:e.target.value}))}/></div>
+              <div><label className="label">Phone *</label><input className="input" required value={ofForm.phone} onChange={e=>setOfForm(p=>({...p,phone:e.target.value}))}/></div>
+              <div><label className="label">Email</label><input className="input" type="email" value={ofForm.email} onChange={e=>setOfForm(p=>({...p,email:e.target.value}))}/></div>
+              <div><label className="label">Password *</label><input className="input" type="password" required value={ofForm.password} onChange={e=>setOfForm(p=>({...p,password:e.target.value}))}/></div>
+            </div>
+            <div>
+              <label className="label">Zone</label>
+              <select className="input" value={ofForm.zone_id} onChange={e=>setOfForm(p=>({...p,zone_id:e.target.value}))}>
+                <option value="">Select zone…</option>
+                {zones.map(z=><option key={z.id} value={z.id}>{z.code} — {z.name}</option>)}
+              </select>
+            </div>
+            {ofErr && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{ofErr}</div>}
+            <button type="submit" disabled={ofSub} className="btn-primary text-sm">{ofSub?'Creating…':'Create Account'}</button>
+          </form>
+        </div>
+      )}
+
       {loading ? <Spinner /> : (
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="min-w-full text-sm">
@@ -1209,38 +1652,1058 @@ function UsersList() {
   );
 }
 
-// Bookings
-function BookingsList() {
-  const [bookings, setBookings] = useState([]);
-  const [loading, setLoading]   = useState(true);
+// ─── Booking status badge (full new state machine) ─────────────
+function BookingStatusBadge({ status }) {
+  const cfg = {
+    pending:           { cls: 'bg-amber-100 text-amber-800 border border-amber-200',      label: 'Pending' },
+    assigned:          { cls: 'bg-blue-100 text-blue-800 border border-blue-200',          label: 'Assigned' },
+    accepted:          { cls: 'bg-cyan-100 text-cyan-800 border border-cyan-200',          label: 'Accepted' },
+    payment_pending:   { cls: 'bg-orange-100 text-orange-800 border border-orange-200',    label: 'Payment Pending' },
+    payment_confirmed: { cls: 'bg-violet-100 text-violet-800 border border-violet-200',    label: 'Payment Confirmed' },
+    student_confirmed: { cls: 'bg-indigo-100 text-indigo-800 border border-indigo-200',    label: 'Student Confirmed' },
+    active:            { cls: 'bg-green-100 text-green-800 border border-green-200',        label: 'Active' },
+    confirmed:         { cls: 'bg-green-100 text-green-800 border border-green-200',        label: 'Confirmed' },
+    checked_in:        { cls: 'bg-emerald-100 text-emerald-800 border border-emerald-200', label: 'Checked In' },
+    move_in_completed: { cls: 'bg-emerald-100 text-emerald-800 border border-emerald-200', label: 'Moved In' },
+    move_out_requested:{ cls: 'bg-amber-100 text-amber-800 border border-amber-200',       label: 'Move-Out Req.' },
+    move_out_completed:{ cls: 'bg-slate-100 text-slate-600 border border-slate-200',       label: 'Moved Out' },
+    checked_out:       { cls: 'bg-slate-100 text-slate-600 border border-slate-200',       label: 'Checked Out' },
+    rejected:          { cls: 'bg-red-100 text-red-700 border border-red-200',             label: 'Rejected' },
+    cancelled:         { cls: 'bg-red-100 text-red-700 border border-red-200',             label: 'Cancelled' },
+  };
+  const c = cfg[status] || { cls: 'bg-slate-100 text-slate-600', label: status };
+  return <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full ${c.cls}`}>{c.label}</span>;
+}
+
+// ─── Book for Student modal ─────────────────────────────────────
+function BookForStudentModal({ onClose, onCreated }) {
+  const [step, setStep]           = useState(1); // 1=find student, 2=pick property/room, 3=confirm
+  const [studentQ, setStudentQ]   = useState('');
+  const [students, setStudents]   = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [student, setStudent]     = useState(null);
+
+  const [properties, setProperties] = useState([]);
+  const [propId, setPropId]         = useState('');
+  const [propRooms, setPropRooms]   = useState([]);
+  const [roomId, setRoomId]         = useState('');
+  const [moveIn, setMoveIn]         = useState('');
+
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+  const [unis, setUnis]         = useState([]);
+  const [uniFilter, setUniFilter] = useState('');
+
   useEffect(() => {
-    api.get('/admin/bookings').then(r => { setBookings(r.data); setLoading(false); }).catch(() => setLoading(false));
+    api.get('/universities').then(r => setUnis(r.data)).catch(()=>{});
+    api.get('/admin/properties').then(r => setProperties(r.data)).catch(()=>{});
   }, []);
-  if (loading) return <Spinner />;
+
+  // Debounced student search
+  const searchTimer = React.useRef(null);
+  const doSearch = (q) => {
+    setStudentQ(q); setError('');
+    clearTimeout(searchTimer.current);
+    if (q.trim().length < 2) { setStudents([]); return; }
+    setSearching(true);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const r = await api.get('/admin/users/students', { params: { q, university_id: uniFilter || undefined } });
+        setStudents(r.data);
+      } catch { setStudents([]); }
+      finally { setSearching(false); }
+    }, 400);
+  };
+
+  // Load rooms when property changes
+  useEffect(() => {
+    setRoomId(''); setPropRooms([]);
+    if (!propId) return;
+    api.get(`/admin/properties/${propId}`).then(r => setPropRooms(r.data.rooms || [])).catch(()=>{});
+  }, [propId]);
+
+  const submit = async () => {
+    if (!student || !propId || !roomId || !moveIn) { setError('All fields are required.'); return; }
+    setLoading(true); setError('');
+    try {
+      await api.post('/admin/bookings', { student_id: student.id, property_id: parseInt(propId), room_id: parseInt(roomId), move_in_date: moveIn });
+      onCreated();
+      onClose();
+    } catch (e) {
+      setError(e.response?.data?.message || 'Failed to create booking.');
+      setLoading(false);
+    }
+  };
+
+  const selectedProperty = properties.find(p => String(p.id) === String(propId));
+  const selectedRoom = propRooms.find(r => String(r.id) === String(roomId));
+
   return (
-    <div className="p-5 lg:p-8">
-      <div className="overflow-x-auto rounded-2xl border border-slate-200">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>{['Student','Property','Room Type','Price','Move-in Date','Status','Zone'].map(h=>(
-              <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
-            ))}</tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {bookings.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-slate-400">No bookings found</td></tr>}
-            {bookings.map(b => (
-              <tr key={b.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3 font-medium">{b.student_name}<div className="text-xs text-slate-400">{b.student_phone}</div></td>
-                <td className="px-4 py-3 text-slate-600">{b.property_name}<div className="text-xs text-slate-400">{b.area}</div></td>
-                <td className="px-4 py-3">{b.room_type}</td>
-                <td className="px-4 py-3 text-primary font-semibold">TZS {Number(b.monthly_price).toLocaleString()}</td>
-                <td className="px-4 py-3">{b.move_in_date}</td>
-                <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
-                <td className="px-4 py-3"><span className="text-xs font-bold text-primary">{b.zone_code||'—'}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+        <div className="bg-primary px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-white">
+            <BookPlus size={18}/>
+            <h3 className="font-display font-bold">Book for Student</h3>
+          </div>
+          <button onClick={onClose} className="text-white/60 hover:text-white"><X size={18}/></button>
+        </div>
+
+        {/* Step indicators */}
+        <div className="flex border-b border-slate-100">
+          {[['1','Find Student'],['2','Pick Room'],['3','Confirm']].map(([n,label]) => (
+            <div key={n} className={`flex-1 py-2.5 text-center text-xs font-semibold transition-colors
+              ${step >= parseInt(n) ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>
+              <span className={`inline-flex w-4 h-4 rounded-full items-center justify-center text-[10px] mr-1
+                ${step > parseInt(n) ? 'bg-primary text-white' : step === parseInt(n) ? 'bg-primary/10 text-primary' : 'bg-slate-100 text-slate-400'}`}>{n}</span>
+              {label}
+            </div>
+          ))}
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* ── Step 1: find student ── */}
+          {step === 1 && <>
+            <div className="flex gap-2">
+              <select className="input text-sm flex-1" value={uniFilter} onChange={e=>setUniFilter(e.target.value)}>
+                <option value="">All universities</option>
+                {unis.map(u=><option key={u.id} value={u.id}>{u.short_name}</option>)}
+              </select>
+            </div>
+            <div className="relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input className="input pl-8" placeholder="Search by name, username or phone…"
+                value={studentQ} onChange={e=>doSearch(e.target.value)} autoFocus />
+              {searching && <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-slate-400"/>}
+            </div>
+            {students.length > 0 && (
+              <div className="border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                {students.map(s => (
+                  <button key={s.id} onClick={()=>{ setStudent(s); setStep(2); }}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-primary/5 text-left border-b border-slate-100 last:border-0 transition-colors">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm shrink-0">
+                      {s.name?.[0]?.toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-900 text-sm truncate">{s.name}</div>
+                      <div className="text-xs text-slate-500">
+                        {s.username && <span className="text-primary">@{s.username} · </span>}
+                        {s.phone} {s.university_short && `· ${s.university_short}`}
+                      </div>
+                    </div>
+                    <ChevronRight size={14} className="text-slate-300 shrink-0"/>
+                  </button>
+                ))}
+              </div>
+            )}
+            {studentQ.length >= 2 && !searching && students.length === 0 && (
+              <p className="text-sm text-slate-400 text-center py-3">No students found for "{studentQ}"</p>
+            )}
+          </>}
+
+          {/* ── Step 2: pick property + room ── */}
+          {step === 2 && <>
+            {student && (
+              <div className="flex items-center gap-3 bg-primary/5 rounded-xl px-4 py-3">
+                <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold text-sm shrink-0">
+                  {student.name?.[0]?.toUpperCase()}
+                </div>
+                <div>
+                  <div className="font-semibold text-sm text-slate-900">{student.name}</div>
+                  <div className="text-xs text-slate-500">{student.username && `@${student.username} · `}{student.phone}</div>
+                </div>
+                <button onClick={()=>{ setStep(1); setStudent(null); }} className="ml-auto text-xs text-primary hover:underline">Change</button>
+              </div>
+            )}
+            <div>
+              <label className="label">Property</label>
+              <select className="input" value={propId} onChange={e=>setPropId(e.target.value)}>
+                <option value="">Select property…</option>
+                {properties.map(p=><option key={p.id} value={p.id}>{p.name} — {p.area}</option>)}
+              </select>
+            </div>
+            {propId && (
+              <div>
+                <label className="label">Room Type</label>
+                {propRooms.length === 0
+                  ? <p className="text-xs text-slate-400">No rooms found for this property.</p>
+                  : <div className="grid grid-cols-1 gap-2">
+                    {propRooms.map(r => (
+                      <button key={r.id} type="button"
+                        onClick={()=>setRoomId(String(r.id))}
+                        className={`flex items-center justify-between px-4 py-3 rounded-xl border-2 text-left transition-all ${String(roomId)===String(r.id) ? 'border-primary bg-primary/5' : 'border-slate-200 hover:border-slate-300'}`}>
+                        <div>
+                          <div className="font-semibold text-sm capitalize">{r.room_type}</div>
+                          <div className="text-xs text-slate-500">TZS {Number(r.monthly_price).toLocaleString()}/mo · {r.total_count} room{r.total_count!=1?'s':''}{parseInt(r.capacity)>1?` × ${r.capacity} beds`:''}</div>
+                        </div>
+                        {String(roomId)===String(r.id) && <Check size={16} className="text-primary shrink-0"/>}
+                      </button>
+                    ))}
+                  </div>
+                }
+              </div>
+            )}
+            <div>
+              <label className="label">Preferred Move-in Date</label>
+              <input type="date" className="input" value={moveIn} onChange={e=>setMoveIn(e.target.value)} min={new Date().toISOString().split('T')[0]} />
+            </div>
+            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>}
+            <div className="flex gap-3 pt-1">
+              <button onClick={()=>setStep(1)} className="btn-outline flex items-center gap-1"><ChevronLeft size={14}/>Back</button>
+              <button onClick={()=>{ if (!propId||!roomId||!moveIn){setError('Select a property, room, and move-in date.');return;} setError(''); setStep(3); }}
+                className="btn-primary flex-1 justify-center">Continue</button>
+            </div>
+          </>}
+
+          {/* ── Step 3: confirm ── */}
+          {step === 3 && <>
+            <div className="bg-slate-50 rounded-xl p-4 space-y-2 text-sm">
+              <div className="flex justify-between"><span className="text-slate-500">Student</span><span className="font-semibold">{student?.name}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Username</span><span className="font-semibold text-primary">@{student?.username||'—'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Property</span><span className="font-semibold">{selectedProperty?.name}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Room</span><span className="font-semibold capitalize">{selectedRoom?.room_type}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Price</span><span className="font-semibold text-primary">TZS {selectedRoom ? Number(selectedRoom.monthly_price).toLocaleString() : '—'}/mo</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Move-in</span><span className="font-semibold">{moveIn}</span></div>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700">
+              The student will be notified and must confirm this booking before it becomes binding.
+            </div>
+            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>}
+            <div className="flex gap-3 pt-1">
+              <button onClick={()=>setStep(2)} className="btn-outline flex items-center gap-1"><ChevronLeft size={14}/>Back</button>
+              <button onClick={submit} disabled={loading} className="btn-primary flex-1 justify-center">
+                {loading ? <><Loader2 size={14} className="animate-spin mr-1"/>Creating…</> : 'Create Booking'}
+              </button>
+            </div>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Assign GM modal ────────────────────────────────────────────
+function AssignGMModal({ booking, onClose, onSaved }) {
+  const [detail, setDetail]   = useState(null);
+  const [gmList, setGMList]   = useState([]);
+  const [gmQ, setGMQ]         = useState('');
+  const [selected, setSelected] = useState(null);
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState('');
+
+  useEffect(() => {
+    api.get(`/admin/bookings/${booking.id}`).then(r => {
+      setDetail(r.data);
+      if (r.data.suggested_gm) setSelected(r.data.suggested_gm);
+    }).catch(()=>{});
+    api.get('/admin/staff').then(r => setGMList(r.data.filter(u=>u.role==='geto_officer'||u.role==='geto_manager'))).catch(()=>{});
+  }, [booking.id]);
+
+  const filteredGMs = gmQ
+    ? gmList.filter(g => g.name.toLowerCase().includes(gmQ.toLowerCase()) || (g.phone||'').includes(gmQ))
+    : gmList;
+
+  const save = async () => {
+    if (!selected) { setError('Select a Geto Officer.'); return; }
+    setSaving(true); setError('');
+    try {
+      await api.post(`/admin/bookings/${booking.id}/assign-geto`, { assigned_to: selected.id });
+      onSaved();
+      onClose();
+    } catch(e) {
+      setError(e.response?.data?.message || 'Failed to assign.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-primary px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-white">
+            <UserCog size={18}/>
+            <h3 className="font-display font-bold">Assign Geto Officer</h3>
+          </div>
+          <button onClick={onClose} className="text-white/60 hover:text-white"><X size={18}/></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="text-sm text-slate-600 bg-slate-50 rounded-xl px-4 py-3">
+            <div className="font-semibold text-slate-900">{booking.student_name}</div>
+            <div className="text-xs mt-0.5">{booking.property_name} · {booking.room_type}</div>
+          </div>
+
+          {detail?.suggested_gm && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+              <div className="text-xs font-semibold text-emerald-700 mb-1">Auto-suggested</div>
+              <button onClick={()=>setSelected(detail.suggested_gm)}
+                className={`w-full flex items-center gap-3 text-left transition-all ${selected?.id===detail.suggested_gm.id?'ring-2 ring-emerald-400 rounded-xl p-1':''}`}>
+                <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm">
+                  {detail.suggested_gm.name?.[0]}
+                </div>
+                <div className="flex-1">
+                  <div className="font-semibold text-sm">{detail.suggested_gm.name}</div>
+                  <div className="text-xs text-slate-500">{detail.suggested_gm.phone} · {detail.suggested_gm.referral_code}</div>
+                </div>
+                {selected?.id===detail.suggested_gm.id && <BadgeCheck size={16} className="text-emerald-500 shrink-0"/>}
+              </button>
+            </div>
+          )}
+
+          <div>
+            <label className="label">Search All Geto Officers</label>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input className="input pl-8 text-sm" placeholder="Name or phone…" value={gmQ} onChange={e=>setGMQ(e.target.value)}/>
+            </div>
+          </div>
+
+          <div className="border border-slate-200 rounded-xl overflow-hidden max-h-48 overflow-y-auto">
+            {filteredGMs.length === 0
+              ? <div className="text-center py-6 text-sm text-slate-400">No managers found</div>
+              : filteredGMs.map(g => (
+                <button key={g.id} onClick={()=>setSelected(g)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-0 text-left transition-colors
+                    ${selected?.id===g.id ? 'bg-primary/5' : 'hover:bg-slate-50'}`}>
+                  <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs">
+                    {g.name?.[0]}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm text-slate-800 truncate">{g.name}</div>
+                    <div className="text-xs text-slate-400">{g.referral_code || g.phone}</div>
+                  </div>
+                  {selected?.id===g.id && <Check size={14} className="text-primary shrink-0"/>}
+                </button>
+              ))
+            }
+          </div>
+
+          {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>}
+
+          <div className="flex gap-3">
+            <button onClick={onClose} className="btn-outline flex-1 justify-center">Cancel</button>
+            <button onClick={save} disabled={saving||!selected} className="btn-primary flex-1 justify-center">
+              {saving ? <><Loader2 size={14} className="animate-spin mr-1"/>Assigning…</> : 'Assign GM'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Snippe payment modal (USSD push) — 2-step flow ───────────
+function SnippePaymentModal({ booking, onClose, onSent }) {
+  const autoDeposit   = !!booking.owner_auto_payout;
+  const depositMonths = booking.deposit_months || 1;
+  const monthly       = Number(booking.monthly_price) || 0;
+  const isHostel      = (booking.property_type || '').toLowerCase() === 'hostel';
+  const getoFeeRate   = isHostel ? 0.75 : 1.0;
+  const depositAmount = autoDeposit ? monthly * depositMonths : 0;
+  const getoFee       = isHostel ? Math.round(monthly * 0.75) : monthly;
+  const subtotal      = depositAmount + getoFee;
+
+  const [step, setStep]       = useState('details'); // 'details' | 'confirm' | 'sent'
+  const [phone, setPhone]     = useState(booking.student_phone || '');
+  const [txFee, setTxFee]     = useState(null);
+  const [feeLoading, setFL]   = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError]     = useState('');
+  const [sent, setSent]       = useState(null);
+
+  const proceed = async () => {
+    if (!phone.trim()) { setError('Phone number is required.'); return; }
+    setError(''); setFL(true); setStep('confirm');
+    try {
+      const r = await api.get(`/payments/fee?amount=${subtotal}`);
+      setTxFee(r.data.fee ?? 0);
+    } catch { setTxFee(Math.round(subtotal * 0.015)); }
+    finally { setFL(false); }
+  };
+
+  const send = async () => {
+    setSending(true); setError('');
+    try {
+      const r = await api.post('/payments/initiate', { booking_id: booking.id, phone: phone.trim() });
+      setSent(r.data); onSent(); setStep('sent');
+    } catch(e) {
+      setError(e.response?.data?.message || 'Failed to send payment request.');
+    } finally { setSending(false); }
+  };
+
+  const total = subtotal + (txFee || 0);
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-violet-600 px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-white">
+            <Smartphone size={18}/>
+            <h3 className="font-display font-bold">Request Payment</h3>
+          </div>
+          {step !== 'sent' && <button onClick={onClose} className="text-white/60 hover:text-white"><X size={18}/></button>}
+        </div>
+
+        {/* Step 1: details + phone */}
+        {step === 'details' && (
+          <div className="p-5 space-y-4">
+            <div className="text-sm bg-slate-50 rounded-xl px-4 py-3">
+              <div className="font-semibold text-slate-900">{booking.student_name}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{booking.property_name} · {booking.room_type} · TZS {monthly.toLocaleString()}/mo</div>
+            </div>
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 space-y-2">
+              <div className="text-[10px] font-bold text-violet-600 uppercase tracking-widest mb-2">Amount Due</div>
+              {autoDeposit ? (
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600">Deposit ({depositMonths} mo × TZS {monthly.toLocaleString()})</span>
+                  <span className="font-semibold">TZS {depositAmount.toLocaleString()}</span>
+                </div>
+              ) : (
+                <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                  Deposit paid directly to owner (off-system)
+                </div>
+              )}
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-600">Geto service fee <span className="text-slate-400 text-xs">({isHostel ? '75%' : '1 month'})</span></span>
+                <span className="font-semibold">TZS {getoFee.toLocaleString()}</span>
+              </div>
+              <div className="border-t border-violet-200 pt-2 flex justify-between">
+                <span className="font-bold text-slate-800">Subtotal</span>
+                <span className="font-bold text-violet-700 text-base">TZS {subtotal.toLocaleString()}</span>
+              </div>
+              <p className="text-[11px] text-slate-400 pt-0.5">Transaction fee will be shown on the next step.</p>
+            </div>
+            <div>
+              <label className="label">Student Mobile Number</label>
+              <input type="tel" className="input" placeholder="e.g. 0712 345 678"
+                value={phone} onChange={e => { setPhone(e.target.value); setError(''); }}/>
+              <p className="text-xs text-slate-400 mt-1">A USSD prompt will be pushed to this number.</p>
+            </div>
+            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>}
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose} className="btn-outline flex-1 justify-center">Cancel</button>
+              <button onClick={proceed}
+                className="flex-1 justify-center bg-violet-600 hover:bg-violet-700 text-white font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors text-sm">
+                Proceed <ChevronRight size={15}/>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: transaction fee reveal + confirm */}
+        {step === 'confirm' && (
+          <div className="p-5 space-y-4">
+            <div className="bg-slate-50 rounded-xl px-4 py-3 text-sm">
+              <div className="text-xs text-slate-400 mb-0.5">Sending USSD push to</div>
+              <div className="font-bold text-slate-900">{phone}</div>
+            </div>
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 space-y-2.5">
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-600">{autoDeposit ? 'Deposit + Geto fee' : 'Geto service fee'}</span>
+                <span className="font-semibold">TZS {subtotal.toLocaleString()}</span>
+              </div>
+              {/* Transaction fee callout */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 flex justify-between items-center gap-3">
+                <div>
+                  <div className="text-xs font-bold text-amber-700">+ Snippe Transaction Fee</div>
+                  <div className="text-[11px] text-amber-600">Charged by payment processor</div>
+                </div>
+                <span className="font-bold text-amber-700 shrink-0">
+                  {feeLoading ? <Loader2 size={14} className="animate-spin"/> : `TZS ${(txFee||0).toLocaleString()}`}
+                </span>
+              </div>
+              <div className="border-t border-violet-200 pt-2 flex justify-between">
+                <span className="font-bold text-slate-800">Total Charged to Student</span>
+                <span className="font-bold text-violet-700 text-lg">
+                  {feeLoading ? '…' : `TZS ${total.toLocaleString()}`}
+                </span>
+              </div>
+            </div>
+            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>}
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={() => { setStep('details'); setError(''); }}
+                className="btn-outline flex-1 justify-center"><ChevronLeft size={14}/> Back</button>
+              <button onClick={send} disabled={sending || feeLoading}
+                className="flex-1 justify-center bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors text-sm">
+                {sending
+                  ? <><Loader2 size={14} className="animate-spin"/>Sending…</>
+                  : <><SendHorizonal size={14}/>Confirm & Send USSD</>}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: success */}
+        {step === 'sent' && sent && (
+          <div className="p-5 space-y-4">
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-5 text-center">
+              <CheckCircle2 size={36} className="text-violet-600 mx-auto mb-2"/>
+              <p className="text-sm font-semibold text-slate-800">Payment request sent!</p>
+              <p className="text-lg font-bold text-violet-700 mt-1">{sent.phone}</p>
+              <p className="text-xs text-slate-500 mt-2">
+                Student will receive a USSD prompt to pay{' '}
+                <span className="font-semibold">TZS {Number(sent.breakdown?.total || total).toLocaleString()}</span>
+              </p>
+            </div>
+            {sent.snippe_ref && (
+              <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 rounded-xl px-3 py-2">
+                <Clock size={11}/><span>Ref: <span className="font-mono text-slate-700">{sent.snippe_ref}</span></span>
+              </div>
+            )}
+            <button onClick={onClose}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-violet-600 text-white rounded-xl text-sm font-semibold hover:bg-violet-700 transition-colors">
+              Done
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Record Payment modal ───────────────────────────────────────
+function RecordPaymentModal({ booking, onClose, onSaved }) {
+  const depositMonths = booking.deposit_months || 1;
+  const suggestedAmount = booking.monthly_price ? booking.monthly_price * depositMonths : '';
+  const [step, setStep]   = useState('payment'); // 'payment' | 'photo'
+  const [form, setForm] = useState({
+    amount_paid: suggestedAmount || '',
+    contract_start: booking.move_in_date || '',
+    contract_end: '',
+    receipt_ref: '',
+    payment_note: '',
+    room_unit_id: '',
+  });
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState('');
+  const [units, setUnits]         = useState([]);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const setF = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  useEffect(() => {
+    if (!booking.property_id) return;
+    api.get(`/admin/properties/${booking.property_id}/room-units`)
+      .then(r => {
+        const available = (r.data || []).filter(u =>
+          u.room_type_id === booking.room_id && Number(u.available_slots) > 0
+        );
+        setUnits(available);
+      }).catch(() => {});
+  }, [booking.property_id, booking.room_id]);
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (!form.amount_paid || !form.contract_start || !form.contract_end) {
+      setError('Amount, contract start and end are required.'); return;
+    }
+    setSaving(true); setError('');
+    try {
+      const payload = { ...form };
+      if (!payload.room_unit_id) delete payload.room_unit_id;
+      await api.post(`/admin/bookings/${booking.id}/confirm-payment`, payload);
+      onSaved();
+      setStep('photo'); // advance to optional photo step
+      setSaving(false);
+    } catch(err) {
+      setError(err.response?.data?.message || 'Failed to record payment.');
+      setSaving(false);
+    }
+  };
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = ev => setPhotoPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const uploadPhoto = async () => {
+    if (!photoFile) { onClose(); return; }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('photo', photoFile);
+      await api.post(`/admin/bookings/${booking.id}/tenant-photo`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+    } catch(_) { /* non-fatal — photo is optional */ }
+    setUploading(false);
+    onClose();
+  };
+
+  if (step === 'photo') {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+          <div className="bg-indigo-600 px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-white">
+              <Camera size={18}/>
+              <h3 className="font-display font-bold">Tenant Photo</h3>
+            </div>
+            <span className="text-white/70 text-xs">Optional</span>
+          </div>
+          <div className="p-5 space-y-4">
+            <p className="text-sm text-slate-600">
+              Take or upload a photo of <strong>{booking.student_name}</strong>. It will appear when the QR code is scanned.
+            </p>
+            {photoPreview ? (
+              <div className="relative">
+                <img src={photoPreview} alt="preview" className="w-full max-h-52 object-cover rounded-xl border border-slate-200"/>
+                <button onClick={()=>{setPhotoFile(null);setPhotoPreview(null);}}
+                  className="absolute top-2 right-2 bg-white/80 rounded-full p-1 text-slate-600 hover:text-red-500">
+                  <X size={14}/>
+                </button>
+              </div>
+            ) : (
+              <label className="flex flex-col items-center gap-3 border-2 border-dashed border-slate-300 rounded-xl p-6 cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-colors">
+                <ImagePlus size={28} className="text-slate-400"/>
+                <span className="text-sm text-slate-500 text-center">
+                  Tap to take a photo or choose from gallery
+                </span>
+                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoChange}/>
+              </label>
+            )}
+            <div className="flex gap-3">
+              <button onClick={onClose} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 px-3 py-2 rounded-xl border border-slate-200 flex-1 justify-center">
+                <SkipForward size={13}/>Skip
+              </button>
+              <button onClick={uploadPhoto} disabled={uploading || !photoFile}
+                className="flex-1 justify-center bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm">
+                {uploading ? <><Loader2 size={14} className="animate-spin"/>Uploading…</> : <><Upload size={14}/>Save Photo</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-white">
+            <CreditCard size={18}/>
+            <h3 className="font-display font-bold">Record Payment</h3>
+          </div>
+          <button onClick={onClose} className="text-white/60 hover:text-white"><X size={18}/></button>
+        </div>
+        <div className="p-5">
+          <div className="text-sm bg-slate-50 rounded-xl px-4 py-3 mb-4">
+            <div className="font-semibold text-slate-900">{booking.student_name}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{booking.property_name} · {booking.room_type} · TZS {Number(booking.monthly_price).toLocaleString()}/mo</div>
+          </div>
+          <form onSubmit={save} className="space-y-3">
+            <div>
+              <label className="label">Amount Paid (TZS) <span className="text-red-500">*</span></label>
+              <input type="number" className="input" placeholder="e.g. 350000" value={form.amount_paid} onChange={e=>setF('amount_paid',e.target.value)} required/>
+              {booking.monthly_price && <p className="text-xs text-slate-400 mt-1">Deposit: {depositMonths} mo × TZS {Number(booking.monthly_price).toLocaleString()} = TZS {(booking.monthly_price*depositMonths).toLocaleString()}</p>}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Contract Start <span className="text-red-500">*</span></label>
+                <input type="date" className="input" value={form.contract_start} onChange={e=>setF('contract_start',e.target.value)} required/>
+              </div>
+              <div>
+                <label className="label">Contract End <span className="text-red-500">*</span></label>
+                <input type="date" className="input" value={form.contract_end} onChange={e=>setF('contract_end',e.target.value)} required/>
+              </div>
+            </div>
+            <div>
+              <label className="label">Assign Room Unit {units.length > 0 ? `(${units.length} available)` : '(none listed)'}</label>
+              <select className="input" value={form.room_unit_id} onChange={e=>setF('room_unit_id',e.target.value)}>
+                <option value="">— Not assigned yet —</option>
+                {units.map(u=>(
+                  <option key={u.id} value={u.id}>
+                    Unit {u.unit_number}{u.floor ? ` · Fl ${u.floor}` : ''} · {u.available_slots} bed{Number(u.available_slots)!==1?'s':''} free
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Receipt / M-Pesa Reference</label>
+              <input type="text" className="input" placeholder="e.g. MPESA123XYZ" value={form.receipt_ref} onChange={e=>setF('receipt_ref',e.target.value)}/>
+            </div>
+            <div>
+              <label className="label">Notes</label>
+              <textarea className="input" rows={2} placeholder="Optional notes about this payment…" value={form.payment_note} onChange={e=>setF('payment_note',e.target.value)}/>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 text-xs text-blue-700">
+              After recording, the student must log in and confirm — their QR code activates at that point.
+            </div>
+            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>}
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose} className="btn-outline flex-1 justify-center">Cancel</button>
+              <button type="submit" disabled={saving} className="flex-1 justify-center bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition-colors text-sm">
+                {saving ? <><Loader2 size={14} className="animate-spin"/>Saving…</> : <><CreditCard size={14}/>Record Payment</>}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Booking detail side panel ──────────────────────────────────
+function BookingDetailPanel({ bookingId, onClose, onAction, isSeniorStaff, isGetoManager }) {
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showAssign, setShowAssign]         = useState(false);
+  const [showSnippePayment, setShowSnippeP] = useState(false);
+  const [cancelling, setCancelling]         = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const r = await api.get(`/admin/bookings/${bookingId}`); setDetail(r.data); }
+    catch { setDetail(null); }
+    finally { setLoading(false); }
+  }, [bookingId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const cancel = async () => {
+    if (!confirm('Cancel this booking? This cannot be undone.')) return;
+    setCancelling(true);
+    try { await api.delete(`/admin/bookings/${bookingId}`); onAction(); onClose(); }
+    catch(e) { alert(e.response?.data?.message || 'Failed.'); setCancelling(false); }
+  };
+
+  const canAssign        = isSeniorStaff && detail && ['pending','assigned','accepted','payment_pending'].includes(detail.status);
+  const canSnippePayment = detail && ['assigned','accepted','payment_pending'].includes(detail.status) &&
+    Number(detail?.monthly_price) > 0 && (isSeniorStaff || (isGetoManager && detail.assigned_to_id));
+  const canCancel        = isSeniorStaff && detail && !['cancelled','checked_out','move_out_completed'].includes(detail.status);
+
+  return (
+    <>
+      {showAssign && <AssignGMModal booking={detail} onClose={()=>setShowAssign(false)} onSaved={()=>{load();onAction();}}/>}
+      {showSnippePayment && <SnippePaymentModal booking={detail} onClose={()=>setShowSnippeP(false)} onSent={()=>{load();onAction();}}/>}
+
+      <div className="flex flex-col h-full bg-white border-l border-slate-200 overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50">
+          <div className="flex items-center gap-2">
+            <ClipboardList size={16} className="text-primary"/>
+            <span className="font-display font-semibold text-slate-800 text-sm">Booking Detail</span>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-200 transition-colors"><X size={16}/></button>
+        </div>
+
+        {loading && <div className="flex items-center justify-center py-16"><Loader2 size={24} className="animate-spin text-primary"/></div>}
+
+        {!loading && !detail && (
+          <div className="text-center py-16 text-slate-400">
+            <AlertCircle size={28} className="mx-auto mb-2"/>
+            <p className="text-sm">Could not load booking.</p>
+          </div>
+        )}
+
+        {!loading && detail && (
+          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            {/* Status + ID */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-slate-400">Booking #{detail.id}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{detail.created_at ? new Date(detail.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>
+              </div>
+              <BookingStatusBadge status={detail.status}/>
+            </div>
+
+            {/* Student */}
+            <div className="bg-primary/5 rounded-2xl p-4">
+              <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-3">Student</div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center font-bold">
+                  {detail.student_name?.[0]?.toUpperCase()}
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">{detail.student_name}</div>
+                  {detail.student_username && <div className="text-xs text-primary">@{detail.student_username}</div>}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                {detail.student_phone && (
+                  <a href={`tel:${detail.student_phone}`} className="flex items-center gap-2 text-xs text-slate-600 hover:text-primary">
+                    <Phone size={12}/> {detail.student_phone}
+                  </a>
+                )}
+                {detail.student_email && (
+                  <a href={`mailto:${detail.student_email}`} className="flex items-center gap-2 text-xs text-slate-600 hover:text-primary">
+                    <Mail size={12}/> {detail.student_email}
+                  </a>
+                )}
+                {detail.student_university && (
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <GraduationCap size={12}/> {detail.student_university}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Property + Room */}
+            <div className="bg-slate-50 rounded-2xl p-4 space-y-2">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Accommodation</div>
+              <div className="flex items-center gap-2 text-slate-800">
+                <Building2 size={14} className="text-primary shrink-0"/>
+                <span className="font-semibold text-sm">{detail.property_name}</span>
+              </div>
+              <div className="flex items-center gap-2 text-slate-500 text-xs">
+                <MapPin size={11}/> {detail.area}
+              </div>
+              <div className="flex items-center gap-2 text-slate-600 text-xs">
+                <BedDouble size={11}/> <span className="capitalize">{detail.room_type}</span>
+              </div>
+              <div className="font-semibold text-primary text-sm">TZS {Number(detail.monthly_price).toLocaleString()}/mo</div>
+            </div>
+
+            {/* Dates */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-slate-50 rounded-xl px-3 py-3">
+                <div className="text-[10px] text-slate-400 mb-1">Move-in</div>
+                <div className="font-semibold text-sm text-slate-800">{detail.move_in_date || '—'}</div>
+              </div>
+              <div className="bg-slate-50 rounded-xl px-3 py-3">
+                <div className="text-[10px] text-slate-400 mb-1">Contract End</div>
+                <div className="font-semibold text-sm text-slate-800">{detail.contract_end || '—'}</div>
+              </div>
+            </div>
+
+            {/* Payment info */}
+            {detail.amount_paid && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-1.5">
+                <div className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest mb-2">Payment Recorded</div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Amount</span>
+                  <span className="font-bold text-emerald-700">TZS {Number(detail.amount_paid).toLocaleString()}</span>
+                </div>
+                {detail.payment_receipt_ref && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Ref</span>
+                    <span className="font-mono text-slate-700">{detail.payment_receipt_ref}</span>
+                  </div>
+                )}
+                {detail.payment_note && (
+                  <div className="text-xs text-slate-500 italic">"{detail.payment_note}"</div>
+                )}
+                {detail.payment_confirmed_by_name && (
+                  <div className="text-xs text-slate-400">Confirmed by {detail.payment_confirmed_by_name}</div>
+                )}
+              </div>
+            )}
+
+            {/* Assigned GM */}
+            {detail.assigned_to_name && (
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
+                <div className="text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-2">Assigned Geto Officer</div>
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs">
+                    {detail.assigned_to_name?.[0]}
+                  </div>
+                  <div>
+                    <div className="font-semibold text-sm text-slate-800">{detail.assigned_to_name}</div>
+                    <div className="text-xs text-slate-500">{detail.assigned_to_phone}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Staff booking note */}
+            {detail.booked_by_staff_name && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800">
+                Booked by staff: <span className="font-semibold">{detail.booked_by_staff_name}</span> ({detail.booked_by_staff_role})
+                — student must confirm
+              </div>
+            )}
+
+            {/* Zone */}
+            {detail.zone_code && (
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <MapPin size={12}/> Zone <span className="font-bold text-primary">{detail.zone_code}</span>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="space-y-2 pt-1">
+              {canAssign && (
+                <button onClick={()=>setShowAssign(true)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
+                  <UserCog size={15}/>
+                  {detail.assigned_to_name ? 'Re-assign Geto Officer' : 'Assign Geto Officer'}
+                </button>
+              )}
+              {canSnippePayment && (
+                <button onClick={()=>setShowSnippeP(true)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-violet-600 text-white rounded-xl text-sm font-semibold hover:bg-violet-700 transition-colors">
+                  <Smartphone size={15}/>Request Payment (USSD)
+                </button>
+              )}
+              {canCancel && (
+                <button onClick={cancel} disabled={cancelling}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-red-200 text-red-600 rounded-xl text-sm font-semibold hover:bg-red-50 transition-colors">
+                  {cancelling ? <><Loader2 size={14} className="animate-spin"/>Cancelling…</> : <><XCircle size={15}/>Cancel Booking</>}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── Bookings — full management view ───────────────────────────
+function BookingsList() {
+  const { isSeniorStaff, isGetoManager, user } = useAuth();
+  const [bookings, setBookings]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [filterStatus, setFilter] = useState('all');
+  const [search, setSearch]       = useState('');
+  const [selected, setSelected]   = useState(null); // booking id for detail panel
+  const [showBookFor, setShowBookFor] = useState(false);
+
+  const STATUS_TABS = [
+    { id: 'all',               label: 'All' },
+    { id: 'pending',           label: 'Pending' },
+    { id: 'assigned',          label: 'Assigned' },
+    { id: 'payment_pending',   label: 'Awaiting Payment' },
+    { id: 'payment_confirmed', label: 'Payment Confirmed' },
+    { id: 'student_confirmed', label: 'Student Confirmed' },
+    { id: 'active',            label: 'Active' },
+    { id: 'checked_in',        label: 'Checked In' },
+    { id: 'rejected',          label: 'Rejected / Cancelled' },
+  ];
+
+  const load = useCallback(() => {
+    const params = {};
+    if (filterStatus !== 'all') {
+      params.status = filterStatus === 'rejected' ? 'rejected,cancelled' : filterStatus;
+    }
+    setLoading(true);
+    api.get('/admin/bookings', { params })
+      .then(r => { setBookings(r.data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [filterStatus]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = search.trim()
+    ? bookings.filter(b =>
+        b.student_name?.toLowerCase().includes(search.toLowerCase()) ||
+        b.student_username?.toLowerCase().includes(search.toLowerCase()) ||
+        b.student_phone?.includes(search) ||
+        b.property_name?.toLowerCase().includes(search.toLowerCase())
+      )
+    : bookings;
+
+  return (
+    <div className="flex flex-col h-full">
+      {showBookFor && <BookForStudentModal onClose={()=>setShowBookFor(false)} onCreated={load}/>}
+
+      {/* Top bar */}
+      <div className="px-5 lg:px-8 pt-5 pb-3 flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+        <div>
+          <h2 className="font-display font-bold text-lg text-slate-900">Bookings</h2>
+          <p className="text-xs text-slate-500 mt-0.5">{bookings.length} booking{bookings.length!==1?'s':''} loaded</p>
+        </div>
+        <button onClick={()=>setShowBookFor(true)}
+          className="btn-primary flex items-center gap-2 text-sm shrink-0">
+          <BookPlus size={15}/>Book for Student
+        </button>
+      </div>
+
+      {/* Status filter tabs — horizontal scroll */}
+      <div className="px-5 lg:px-8 pb-3">
+        <div className="flex gap-1.5 overflow-x-auto pb-1 hide-scrollbar">
+          {STATUS_TABS.map(t => (
+            <button key={t.id} onClick={()=>{ setFilter(t.id); setSelected(null); }}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all border
+                ${filterStatus===t.id
+                  ? 'bg-primary text-white border-primary shadow-sm'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-primary/50 hover:text-primary'}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="px-5 lg:px-8 pb-4">
+        <div className="relative max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input className="input pl-8 text-sm" placeholder="Search student, username, property…"
+            value={search} onChange={e=>setSearch(e.target.value)}/>
+          {search && <button onClick={()=>setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"><X size={13}/></button>}
+        </div>
+      </div>
+
+      {/* Split layout: table + detail panel */}
+      <div className={`flex flex-1 overflow-hidden min-h-0 px-5 lg:px-8 pb-8 gap-5 ${selected?'':'pr-5 lg:pr-8'}`}>
+        {/* Table */}
+        <div className="flex-1 overflow-auto rounded-2xl border border-slate-200 bg-white">
+          {loading
+            ? <div className="flex items-center justify-center py-20"><Loader2 size={28} className="animate-spin text-primary"/></div>
+            : (
+            <table className="min-w-full text-sm">
+              <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
+                <tr>
+                  {['Student','Property / Room','Price','Move-in','Status','GM'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filtered.length === 0 && (
+                  <tr><td colSpan={6} className="text-center py-14 text-slate-400">
+                    <CheckSquare size={32} className="mx-auto mb-2 opacity-30"/>No bookings match your filter.
+                  </td></tr>
+                )}
+                {filtered.map(b => (
+                  <tr key={b.id}
+                    onClick={()=>setSelected(selected===b.id ? null : b.id)}
+                    className={`cursor-pointer transition-colors ${selected===b.id ? 'bg-primary/5 border-l-4 border-l-primary' : 'hover:bg-slate-50'}`}>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-slate-900 whitespace-nowrap">{b.student_name}</div>
+                      <div className="text-xs text-slate-400">
+                        {b.student_username && <span className="text-primary">@{b.student_username} · </span>}
+                        {b.student_phone}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-700 whitespace-nowrap">{b.property_name}</div>
+                      <div className="text-xs text-slate-400 capitalize">{b.room_type} · {b.area}</div>
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-primary whitespace-nowrap">
+                      TZS {Number(b.monthly_price).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap text-xs">{b.move_in_date||'—'}</td>
+                    <td className="px-4 py-3"><BookingStatusBadge status={b.status}/></td>
+                    <td className="px-4 py-3 text-xs">
+                      {b.assigned_to_name
+                        ? <span className="text-blue-700 font-medium">{b.assigned_to_name.split(' ')[0]}</span>
+                        : <span className="text-slate-300">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Detail panel */}
+        {selected && (
+          <div className="w-80 shrink-0 rounded-2xl overflow-hidden border border-slate-200 flex flex-col">
+            <BookingDetailPanel
+              bookingId={selected}
+              onClose={()=>setSelected(null)}
+              onAction={load}
+              isSeniorStaff={isSeniorStaff}
+              isGetoManager={isGetoManager}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1252,7 +2715,7 @@ function ZonesView() {
   const [loading, setLoading]   = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState({});
-  const [clusterForms, setClusterForms] = useState({});
+  const [covForms, setCovForms] = useState({});   // { zoneId: { type:'ward', value:'' } }
   const [saving, setSaving]     = useState(false);
   const [err, setErr]           = useState('');
   const [zoneForm, setZoneForm] = useState({ code:'', name:'', city:'', description:'' });
@@ -1278,14 +2741,20 @@ function ZonesView() {
     load();
   };
 
-  const addCluster = async (zoneId, e) => {
+  const addCoverage = async (zoneId, e) => {
     e.preventDefault(); setErr('');
-    const f = clusterForms[zoneId] || { code:'', name:'' };
+    const f = covForms[zoneId] || { type:'ward', value:'' };
+    if (!f.value.trim()) return;
     try {
-      await api.post(`/admin/zones/${zoneId}/clusters`, f);
-      setClusterForms(p => ({ ...p, [zoneId]: { code:'', name:'' } }));
+      await api.post(`/admin/zones/${zoneId}/coverage`, { coverage_type: f.type, coverage_value: f.value.trim() });
+      setCovForms(p => ({ ...p, [zoneId]: { type: f.type, value: '' } }));
       load();
-    } catch(e) { setErr(e.response?.data?.message || 'An error occurred.'); }
+    } catch(e) { setErr(e.response?.data?.message || 'Already added.'); }
+  };
+
+  const removeCoverage = async (zoneId, covId) => {
+    await api.delete(`/admin/zones/${zoneId}/coverage/${covId}`);
+    load();
   };
 
   // Group zones by city
@@ -1361,7 +2830,17 @@ function ZonesView() {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {cityZones.map(z => {
               const isOpen = expanded[z.id];
-              const cf = clusterForms[z.id] || { code:'', name:'' };
+              const cf = covForms[z.id] || { type:'ward', value:'' };
+              const coverage = z.coverage || [];
+              const tzRegions = Object.keys(TZ_LOCATIONS).sort();
+              const tzDistricts = cf.type === 'district' || cf.type === 'ward'
+                ? Object.values(TZ_LOCATIONS).flatMap(r => Object.keys(r)).filter((v,i,a)=>a.indexOf(v)===i).sort()
+                : [];
+              const tzWards = cf.type === 'ward'
+                ? Object.values(TZ_LOCATIONS).flatMap(r => Object.values(r).flat()).filter((v,i,a)=>a.indexOf(v)===i).sort()
+                : [];
+              const typeOpts = cf.type === 'region' ? tzRegions : cf.type === 'district' ? tzDistricts : tzWards;
+
               return (
                 <div key={z.id} className={`bg-white rounded-2xl border ${z.active ? 'border-slate-200' : 'border-slate-100 opacity-60'} shadow-sm`}>
                   {/* Zone header */}
@@ -1385,35 +2864,54 @@ function ZonesView() {
                       <div className="text-center"><div className="font-bold text-primary text-base">{z.total_rooms||0}</div>Rooms</div>
                       <div className="text-center"><div className="font-bold text-accent-600 text-base">{z.managers||0}</div>Managers</div>
                     </div>
-                    {/* Toggle clusters */}
+                    {/* Toggle coverage */}
                     <button onClick={() => setExpanded(p=>({...p,[z.id]:!p[z.id]}))}
                       className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-700 transition-colors">
-                      <span>{(z.clusters||[]).length} Sub-areas</span>
+                      <span>{coverage.length} coverage area{coverage.length !== 1 ? 's' : ''}</span>
                       <Chevron size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}/>
                     </button>
                   </div>
 
-                  {/* Clusters panel */}
+                  {/* Coverage panel */}
                   {isOpen && (
                     <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-2">
-                      {(z.clusters||[]).map(c => (
-                        <div key={c.id} className="flex items-center justify-between text-xs">
-                          <span className="font-mono text-primary font-bold w-12">{c.code}</span>
-                          <span className="flex-1 text-slate-700">{c.name}</span>
-                          {!c.active && <span className="text-slate-400 text-[10px]">Inactive</span>}
+                      {coverage.length === 0 && (
+                        <p className="text-xs text-slate-400 italic">No coverage configured — properties won't auto-match this zone.</p>
+                      )}
+                      {coverage.map(c => (
+                        <div key={c.id} className="flex items-center justify-between text-xs gap-2">
+                          <span className={`px-1.5 py-0.5 rounded font-medium text-[10px] uppercase tracking-wide ${c.coverage_type==='region'?'bg-blue-100 text-blue-700':c.coverage_type==='district'?'bg-violet-100 text-violet-700':'bg-emerald-100 text-emerald-700'}`}>
+                            {c.coverage_type}
+                          </span>
+                          <span className="flex-1 text-slate-700 truncate">{c.coverage_value}</span>
+                          <button onClick={() => removeCoverage(z.id, c.id)}
+                            className="text-slate-300 hover:text-red-500 transition-colors shrink-0">
+                            <X size={13}/>
+                          </button>
                         </div>
                       ))}
-                      {/* Add cluster form */}
-                      <form onSubmit={e => addCluster(z.id, e)} className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
-                        <input className="input text-xs py-1.5 w-20 font-mono" value={cf.code} maxLength={6}
-                          onChange={e => setClusterForms(p=>({...p,[z.id]:{...cf,code:e.target.value.toUpperCase()}}))}
-                          placeholder="Code" required/>
-                        <input className="input text-xs py-1.5 flex-1" value={cf.name}
-                          onChange={e => setClusterForms(p=>({...p,[z.id]:{...cf,name:e.target.value}}))}
-                          placeholder="Area name" required/>
-                        <button type="submit" className="btn-sm bg-primary text-white hover:bg-primary-600 shrink-0">
-                          <Plus size={12}/>
-                        </button>
+                      {/* Add coverage form */}
+                      <form onSubmit={e => addCoverage(z.id, e)} className="flex flex-col gap-2 mt-3 pt-3 border-t border-slate-100">
+                        <div className="flex gap-2">
+                          <select className="input text-xs py-1.5 w-24 shrink-0"
+                            value={cf.type}
+                            onChange={e => setCovForms(p=>({...p,[z.id]:{...cf,type:e.target.value,value:''}}))}>
+                            <option value="region">Region</option>
+                            <option value="district">District</option>
+                            <option value="ward">Ward</option>
+                          </select>
+                          <div className="flex-1">
+                            <LocTypeahead
+                              value={cf.value}
+                              onChange={v => setCovForms(p=>({...p,[z.id]:{...cf,value:v}}))}
+                              options={typeOpts}
+                              placeholder={`Search ${cf.type}…`}
+                            />
+                          </div>
+                          <button type="submit" className="btn-sm bg-primary text-white hover:bg-primary/80 shrink-0">
+                            <Plus size={12}/>
+                          </button>
+                        </div>
                       </form>
                       {err && <p className="text-xs text-red-600">{err}</p>}
                     </div>
@@ -1572,6 +3070,7 @@ function UniversitiesView() {
 
 // Zone Managers (admin only)
 function StaffView() {
+  const { isAdmin, isZoneManager } = useAuth();
   const [staff, setStaff]   = useState([]);
   const [zones, setZones]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1579,29 +3078,78 @@ function StaffView() {
   const [err, setErr]       = useState('');
   const [submitting, setSub]= useState(false);
 
-  useEffect(() => {
-    Promise.all([
-      api.get('/admin/zone-managers'),
-      api.get('/zones'),
-    ]).then(([r1, r2]) => { setStaff(r1.data); setZones(r2.data); setLoading(false); })
-     .catch(() => setLoading(false));
-  }, []);
+  const load = useCallback(() => {
+    if (isZoneManager && !isAdmin) {
+      api.get('/admin/staff').then(r => { setStaff(r.data); setLoading(false); }).catch(() => setLoading(false));
+    } else {
+      Promise.all([api.get('/admin/zone-managers'), api.get('/zones')])
+        .then(([r1, r2]) => { setStaff(r1.data); setZones(r2.data); setLoading(false); })
+        .catch(() => setLoading(false));
+    }
+  }, [isAdmin, isZoneManager]);
+
+  useEffect(() => { load(); }, [load]);
 
   const create = async (e) => {
     e.preventDefault(); setErr(''); setSub(true);
     try {
-      await api.post('/admin/users/zone-manager', form);
-      const r = await api.get('/admin/zone-managers');
-      setStaff(r.data);
+      if (isZoneManager && !isAdmin) {
+        await api.post('/admin/users/geto-officer', form);
+      } else {
+        await api.post('/admin/users/zone-manager', form);
+      }
       setForm({ name:'', email:'', phone:'', password:'', zone_id:'' });
+      load();
     } catch (e) { setErr(e.response?.data?.message || 'An error occurred.'); }
     finally { setSub(false); }
   };
 
   if (loading) return <Spinner />;
+
+  // ── Zone Manager view: create + list their Geto Officers
+  if (isZoneManager && !isAdmin) {
+    return (
+      <div className="p-5 lg:p-8 space-y-8">
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 max-w-lg">
+          <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2"><UserPlus size={16}/>Create Geto Officer</h3>
+          <form onSubmit={create} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="label">Name *</label><input className="input" required value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/></div>
+              <div><label className="label">Phone *</label><input className="input" required value={form.phone} onChange={e=>setForm(p=>({...p,phone:e.target.value}))}/></div>
+              <div><label className="label">Email</label><input className="input" type="email" value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))}/></div>
+              <div><label className="label">Password *</label><input className="input" type="password" required value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))}/></div>
+            </div>
+            {err && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-xl">{err}</div>}
+            <button type="submit" disabled={submitting} className="btn-primary text-sm">{submitting?'Creating…':'Create Account'}</button>
+          </form>
+        </div>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>{['Name','Phone','Email','Active Bookings'].map(h=>(
+                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {staff.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">No Geto Officers yet</td></tr>}
+              {staff.map(s => (
+                <tr key={s.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 font-medium">{s.name}</td>
+                  <td className="px-4 py-3 text-slate-500">{s.phone}</td>
+                  <td className="px-4 py-3 text-slate-500">{s.email||'—'}</td>
+                  <td className="px-4 py-3">{s.active_bookings||0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Admin view: create + list zone managers
   return (
     <div className="p-5 lg:p-8 space-y-8">
-      {/* Create form */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 max-w-lg">
         <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2"><UserPlus size={16}/>Add Zone Manager</h3>
         <form onSubmit={create} className="space-y-3">
@@ -1622,7 +3170,6 @@ function StaffView() {
           <button type="submit" disabled={submitting} className="btn-primary">{submitting?'Creating…':'Create Account'}</button>
         </form>
       </div>
-      {/* Staff list */}
       <div className="overflow-x-auto rounded-2xl border border-slate-200">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 border-b border-slate-200">
@@ -1718,6 +3265,344 @@ function TypesView() {
   );
 }
 
+// ─── Occupancy Dashboard ───────────────────────────────────────
+function OccupancyDashboard() {
+  const loc = useLocation();
+  const navigate = useNavigate();
+  // path: /admin/properties/:id/occupancy
+  const parts = loc.pathname.split('/');
+  const propId = parts[parts.findIndex(p => p === 'occupancy') - 1];
+
+  const [data,         setData]         = useState(null);
+  const [loading,      setLoading]      = useState(true);
+  const [activeFloor,  setActiveFloor]  = useState(null);
+  const [drawer,       setDrawer]       = useState(null);
+  const [unassigned,   setUnassigned]   = useState([]);
+  const [rTypes,       setRTypes]       = useState([]);
+  const [bulkOpen,     setBulkOpen]     = useState(false);
+  const [singleOpen,   setSingleOpen]   = useState(false);
+  const [actionLoad,   setActionLoad]   = useState(false);
+  const [bulk,  setBulk]  = useState({ room_type_id:'', floors:'3', units_per_floor:'10', prefix:'', start_number:'1' });
+  const [single,setSingle]= useState({ room_type_id:'', unit_number:'', floor:'1' });
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      api.get(`/admin/properties/${propId}/occupancy`),
+      api.get('/admin/room-types'),
+    ]).then(([occ, rt]) => {
+      setData(occ.data);
+      setRTypes(rt.data);
+      setLoading(false);
+      if (occ.data.floors?.length) setActiveFloor(af => af ?? occ.data.floors[0].floor);
+    }).catch(() => setLoading(false));
+  }, [propId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const loadUnassigned = useCallback(async (unit) => {
+    const res = await api.get(`/admin/properties/${propId}/unassigned-bookings`);
+    setUnassigned(res.data.filter(b => String(b.room_type_id) === String(unit.room_type_id)));
+    setDrawer({ type: 'vacant', unit });
+  }, [propId]);
+
+  const openUnit = (unit) => {
+    if (unit.booking_id) setDrawer({ type: 'occupied', unit });
+    else loadUnassigned(unit);
+  };
+
+  const assign = async (bookingId) => {
+    setActionLoad(true);
+    try {
+      await api.post(`/admin/bookings/${bookingId}/assign-unit`, { room_unit_id: drawer.unit.id });
+      setDrawer(null); load();
+    } catch (e) { alert(e.response?.data?.message || 'Assignment failed.'); }
+    finally { setActionLoad(false); }
+  };
+
+  const unassign = async (bookingId) => {
+    if (!confirm('Remove this tenant from the room unit?')) return;
+    setActionLoad(true);
+    try { await api.delete(`/admin/bookings/${bookingId}/assign-unit`); setDrawer(null); load(); }
+    catch (e) { alert(e.response?.data?.message || 'Failed.'); }
+    finally { setActionLoad(false); }
+  };
+
+  const toggleMaint = async (unit) => {
+    const s = unit.status === 'maintenance' ? 'available' : 'maintenance';
+    try { await api.put(`/admin/room-units/${unit.id}`, { status: s }); load(); }
+    catch { alert('Could not update status.'); }
+  };
+
+  const createSingle = async (e) => {
+    e.preventDefault();
+    try { await api.post(`/admin/properties/${propId}/room-units`, single); setSingleOpen(false); setSingle({ room_type_id:'', unit_number:'', floor:'1' }); load(); }
+    catch (e) { alert(e.response?.data?.message || 'Failed.'); }
+  };
+
+  const createBulk = async (e) => {
+    e.preventDefault();
+    try { await api.post(`/admin/properties/${propId}/room-units/bulk`, bulk); setBulkOpen(false); load(); }
+    catch (e) { alert(e.response?.data?.message || 'Failed.'); }
+  };
+
+  const fmtDate = d => d ? new Date(d).toLocaleDateString('en-TZ', { day:'2-digit', month:'short', year:'2-digit' }) : '—';
+  const fmtAmt  = n => n ? `TZS ${Number(n).toLocaleString('en-TZ')}` : '—';
+
+  const currentUnits = activeFloor !== null
+    ? (data?.floors?.find(f => f.floor === activeFloor)?.units ?? [])
+    : [];
+  const s = data?.summary ?? {};
+
+  if (loading) return <Spinner />;
+  if (!data)   return <EmptyState label="Property not found." />;
+
+  return (
+    <div className="p-5 lg:p-8 space-y-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <button onClick={() => navigate(`/admin/properties/${propId}`)}
+            className="flex items-center gap-1 text-xs text-slate-500 hover:text-primary mb-2">
+            <ArrowLeft size={13}/> Back to property
+          </button>
+          <h2 className="font-display font-bold text-xl text-slate-900">{data.property.name}</h2>
+          <p className="text-sm text-slate-500 mt-0.5">{data.property.area} · Occupancy Grid</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => { setSingleOpen(v=>!v); setBulkOpen(false); }}
+            className="btn-sm border border-slate-300 text-slate-700 hover:border-primary hover:text-primary bg-white">
+            <Plus size={13}/> Add Unit
+          </button>
+          <button onClick={() => { setBulkOpen(v=>!v); setSingleOpen(false); }}
+            className="btn-sm bg-primary text-white hover:bg-primary/90">
+            <Layers size={13}/> Bulk Generate
+          </button>
+        </div>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label:'Total Units',  v:s.total,       cls:'text-primary'   },
+          { label:'Occupied',     v:s.occupied,    cls:'text-amber-600' },
+          { label:'Available',    v:s.available,   cls:'text-green-600' },
+          { label:'Maintenance',  v:s.maintenance, cls:'text-slate-500' },
+        ].map(({ label, v, cls }) => (
+          <div key={label} className="bg-white rounded-2xl border border-slate-200 px-4 py-4">
+            <div className="text-xs text-slate-400 font-medium mb-1">{label}</div>
+            <div className={`text-2xl font-bold ${cls}`}>{v ?? 0}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Bulk create form */}
+      {bulkOpen && (
+        <form onSubmit={createBulk} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="font-semibold text-slate-800 text-sm">Bulk Generate Room Units</p>
+            <button type="button" onClick={() => setBulkOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={16}/></button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="label">Room Type</label>
+              <select className="input" required value={bulk.room_type_id} onChange={e=>setBulk(p=>({...p,room_type_id:e.target.value}))}>
+                <option value="">Select type</option>
+                {rTypes.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Floors</label>
+              <input className="input" type="number" min="1" max="20" required value={bulk.floors} onChange={e=>setBulk(p=>({...p,floors:e.target.value}))}/>
+            </div>
+            <div>
+              <label className="label">Units / Floor</label>
+              <input className="input" type="number" min="1" max="50" required value={bulk.units_per_floor} onChange={e=>setBulk(p=>({...p,units_per_floor:e.target.value}))}/>
+            </div>
+            <div>
+              <label className="label">Prefix (optional)</label>
+              <input className="input" placeholder="e.g. A or B" value={bulk.prefix} onChange={e=>setBulk(p=>({...p,prefix:e.target.value.toUpperCase()}))}/>
+            </div>
+            <div>
+              <label className="label">Start Number</label>
+              <input className="input" type="number" min="1" value={bulk.start_number} onChange={e=>setBulk(p=>({...p,start_number:e.target.value}))}/>
+            </div>
+          </div>
+          <div className="text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-3 py-2">
+            Sample: <strong>{(bulk.prefix||'') + '1' + String(Number(bulk.start_number)||1).padStart(2,'0')}</strong>
+            {' '}→ <strong>{(bulk.prefix||'') + String(Number(bulk.floors)||1) + String((Number(bulk.start_number)||1)+(Number(bulk.units_per_floor)||1)-1).padStart(2,'0')}</strong>
+            {' '}({Number(bulk.floors||0)*Number(bulk.units_per_floor||0)} total)
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={()=>setBulkOpen(false)} className="btn-sm border border-slate-300 text-slate-600 bg-white">Cancel</button>
+            <button type="submit" className="btn-sm bg-primary text-white hover:bg-primary/90">Generate Units</button>
+          </div>
+        </form>
+      )}
+
+      {/* Single unit form */}
+      {singleOpen && (
+        <form onSubmit={createSingle} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="font-semibold text-slate-800 text-sm">Add Single Unit</p>
+            <button type="button" onClick={()=>setSingleOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={16}/></button>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="label">Room Type</label>
+              <select className="input" required value={single.room_type_id} onChange={e=>setSingle(p=>({...p,room_type_id:e.target.value}))}>
+                <option value="">Select</option>
+                {rTypes.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Unit Number</label>
+              <input className="input" placeholder="e.g. 101" required value={single.unit_number} onChange={e=>setSingle(p=>({...p,unit_number:e.target.value}))}/>
+            </div>
+            <div>
+              <label className="label">Floor</label>
+              <input className="input" type="number" min="1" max="20" value={single.floor} onChange={e=>setSingle(p=>({...p,floor:e.target.value}))}/>
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={()=>setSingleOpen(false)} className="btn-sm border border-slate-300 text-slate-600 bg-white">Cancel</button>
+            <button type="submit" className="btn-sm bg-primary text-white hover:bg-primary/90">Add Unit</button>
+          </div>
+        </form>
+      )}
+
+      {/* Empty state */}
+      {data.floors.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-12 text-center">
+          <BedDouble size={40} className="mx-auto text-slate-300 mb-3"/>
+          <p className="text-slate-500 font-medium text-sm">No room units yet</p>
+          <p className="text-xs text-slate-400 mt-1">Use "Bulk Generate" to set up the grid, or add units one by one.</p>
+        </div>
+      ) : (
+        <>
+          {/* Floor tab strip */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            {data.floors.map(f => {
+              const occ = f.units.filter(u => u.booking_id).length;
+              const active = activeFloor === f.floor;
+              return (
+                <button key={f.floor} onClick={() => setActiveFloor(f.floor)}
+                  className={`shrink-0 px-4 py-1.5 rounded-full text-sm font-medium transition-all
+                    ${active ? 'bg-primary text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:border-primary hover:text-primary'}`}>
+                  Floor {f.floor}
+                  <span className={`ml-1.5 text-xs ${active ? 'text-white/60' : 'text-slate-400'}`}>{occ}/{f.units.length}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Unit grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {currentUnits.map(unit => {
+              const occupied = !!unit.booking_id;
+              const maint    = unit.status === 'maintenance';
+              const cardCls  = occupied ? 'border-amber-300 bg-amber-50 hover:border-amber-400 hover:shadow-amber-100'
+                             : maint    ? 'border-slate-300 bg-slate-100 hover:border-slate-400'
+                                        : 'border-green-300 bg-green-50 hover:border-green-400 hover:shadow-green-100';
+              const dotCls   = occupied ? 'bg-amber-400' : maint ? 'bg-slate-400' : 'bg-green-400';
+              return (
+                <button key={unit.id} onClick={() => openUnit(unit)}
+                  className={`relative border-2 rounded-2xl p-4 text-left transition-all cursor-pointer hover:shadow-md ${cardCls}`}>
+                  <span className={`absolute top-3 right-3 w-2.5 h-2.5 rounded-full ${dotCls}`}/>
+                  <div className="font-display font-bold text-lg text-slate-800 leading-none">{unit.unit_number}</div>
+                  <div className="text-xs text-slate-500 mt-1">{unit.room_type}</div>
+                  {occupied && <div className="mt-2 text-xs font-medium text-amber-700 truncate">{unit.tenant_name}</div>}
+                  {maint && !occupied && <div className="mt-2 text-xs text-slate-400 font-medium">Maintenance</div>}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Assignment Drawer */}
+      {drawer && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" onClick={() => setDrawer(null)}/>
+          <div className="fixed z-50 bg-white shadow-2xl flex flex-col
+            bottom-0 left-0 right-0 rounded-t-3xl max-h-[75vh]
+            lg:inset-y-0 lg:right-0 lg:left-auto lg:rounded-none lg:rounded-l-3xl lg:w-96 lg:max-h-none">
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-slate-100 shrink-0">
+              <div>
+                <p className="font-display font-bold text-slate-800">Unit {drawer.unit.unit_number}</p>
+                <p className="text-xs text-slate-500">{drawer.unit.room_type} · Floor {drawer.unit.floor}</p>
+              </div>
+              <button onClick={() => setDrawer(null)} className="p-2 rounded-xl hover:bg-slate-100 text-slate-500"><X size={18}/></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+              {drawer.type === 'occupied' ? (
+                <>
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <UserCheck size={15} className="text-amber-600 shrink-0"/>
+                      <span className="font-semibold text-slate-800 text-sm">Current Tenant</span>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-800">{drawer.unit.tenant_name}</div>
+                    <div className="text-xs text-slate-500">{drawer.unit.tenant_phone || '—'}</div>
+                    {(drawer.unit.contract_start || drawer.unit.contract_end) && (
+                      <div className="text-xs text-slate-500 pt-1 border-t border-amber-100">
+                        Contract: {fmtDate(drawer.unit.contract_start)} → {fmtDate(drawer.unit.contract_end)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => toggleMaint(drawer.unit)}
+                      className="flex-1 btn-sm border border-slate-300 text-slate-600 bg-white">
+                      <Wrench size={12}/>{drawer.unit.status==='maintenance' ? 'Remove Maint.' : 'Set Maintenance'}
+                    </button>
+                    <button onClick={() => unassign(drawer.unit.booking_id)} disabled={actionLoad}
+                      className="flex-1 btn-sm bg-red-600 text-white hover:bg-red-700">
+                      <XCircle size={12}/>{actionLoad ? '…' : 'Unassign'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-sm text-slate-800">Assign to a student</p>
+                    <button onClick={() => toggleMaint(drawer.unit)}
+                      className="btn-sm border border-slate-300 text-slate-600 bg-white text-xs">
+                      <Wrench size={11}/>{drawer.unit.status==='maintenance' ? 'Remove Maint.' : 'Set Maintenance'}
+                    </button>
+                  </div>
+                  {unassigned.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400">
+                      <Check size={24} className="mx-auto mb-2"/>
+                      <p className="text-sm">No confirmed bookings awaiting assignment for this room type.</p>
+                    </div>
+                  ) : unassigned.map(b => (
+                    <div key={b.id} className="border border-slate-200 rounded-2xl p-4 flex items-start justify-between gap-3 hover:border-accent/50 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-800 text-sm truncate">{b.student_name}</div>
+                        <div className="text-xs text-slate-500">{b.student_phone}</div>
+                        <div className="text-xs text-slate-400 mt-1">
+                          Move-in: {fmtDate(b.move_in_date)}
+                          {b.amount_paid ? ` · ${fmtAmt(b.amount_paid)}` : ''}
+                        </div>
+                      </div>
+                      <button onClick={() => assign(b.id)} disabled={actionLoad}
+                        className="btn-sm bg-accent text-primary-900 font-semibold hover:bg-accent/90 shrink-0">
+                        {actionLoad ? <Loader2 size={12} className="animate-spin"/> : 'Assign'}
+                      </button>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Shared helpers ────────────────────────────────────────────
 function Spinner() {
   return <div className="flex items-center justify-center p-16 text-primary"><Loader2 size={32} className="animate-spin"/></div>;
@@ -1727,14 +3612,24 @@ function EmptyState({ label }) {
 }
 function StatusBadge({ status }) {
   const map = {
-    pending: 'badge-amber', approved: 'badge-green', rejected: 'badge-red',
-    confirmed: 'badge-green', cancelled: 'badge-red', accepted: 'badge-blue',
-    payment_pending: 'badge-amber', move_in_completed: 'badge-green',
+    pending:'badge-amber', approved:'badge-green', rejected:'badge-red',
+    confirmed:'badge-green', cancelled:'badge-red', accepted:'badge-blue',
+    payment_pending:'badge-amber', move_in_completed:'badge-green',
+    assigned:'badge-blue', payment_confirmed:'badge-green',
+    student_confirmed:'badge-green', active:'badge-green',
+    checked_in:'badge-green', checked_out:'badge-gray',
+    move_out_requested:'badge-amber', move_out_completed:'badge-gray',
+    pending_verification:'badge-amber', suspended:'badge-red',
   };
   const labels = {
     pending:'Pending', approved:'Approved', rejected:'Rejected',
     confirmed:'Confirmed', cancelled:'Cancelled', accepted:'Accepted',
     payment_pending:'Payment Pending', move_in_completed:'Moved In',
+    assigned:'Assigned', payment_confirmed:'Payment Confirmed',
+    student_confirmed:'Student Confirmed', active:'Active',
+    checked_in:'Checked In', checked_out:'Checked Out',
+    move_out_requested:'Move-Out Req.', move_out_completed:'Moved Out',
+    pending_verification:'Pending Verification', suspended:'Suspended',
   };
   return <span className={`badge ${map[status]||'badge-gray'}`}>{labels[status]||status}</span>;
 }
@@ -1751,12 +3646,13 @@ export default function AdminPortal() {
         <Routes>
           <Route index element={<Dashboard />} />
           <Route path="properties"    element={<PropertiesList />} />
+          <Route path="properties/:id/occupancy" element={<OccupancyDashboard />} />
           <Route path="properties/:id" element={<PropertyDetail />} />
           <Route path="users"         element={<UsersList />} />
           <Route path="bookings"      element={<BookingsList />} />
           {isAdmin && <Route path="zones"         element={<ZonesView />} />}
           {isAdmin && <Route path="universities"  element={<UniversitiesView />} />}
-          {isAdmin && <Route path="staff"         element={<StaffView />} />}
+          {(isAdmin || isZoneManager) && <Route path="staff" element={<StaffView />} />}
           {isAdmin && <Route path="types"         element={<TypesView />} />}
         </Routes>
       </div>

@@ -4,7 +4,7 @@ import api from '../api';
 
 export default function ViewingModal({ property, onClose }) {
   const [date, setDate]   = useState('');
-  const [time, setTime]   = useState('Morning');
+  const [time, setTime]   = useState('Morning (8am – 12pm)');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -14,7 +14,7 @@ export default function ViewingModal({ property, onClose }) {
     if (!date) { setError('Please select a preferred date.'); return; }
     setLoading(true); setError('');
     try {
-      await api.post('/viewings', { property_id: property.id, preferred_date: date, preferred_time: time, notes });
+      await api.post('/student/viewings', { property_id: property.id, preferred_date: date, preferred_time: time, notes });
       setSuccess(true);
     } catch (e) {
       setError(e.response?.data?.message || 'Failed. Please try again.');

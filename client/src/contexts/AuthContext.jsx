@@ -23,15 +23,15 @@ export function AuthProvider({ children }) {
   };
 
   // Frontend: student, property_owner, property_manager
-  const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
+  const login = async (phoneOrEmail, password) => {
+    const { data } = await api.post('/auth/login', { phone_or_email: phoneOrEmail, password });
     _saveSession(data.token, data.user);
     return data.user;
   };
 
-  // Backend: admin, zone_manager (used only from /admin page)
-  const staffLogin = async (email, password) => {
-    const { data } = await api.post('/auth/staff/login', { email, password });
+  // Backend: admin, zone_manager, geto_manager
+  const staffLogin = async (phoneOrEmail, password) => {
+    const { data } = await api.post('/auth/staff/login', { phone_or_email: phoneOrEmail, password });
     _saveSession(data.token, data.user);
     return data.user;
   };
@@ -48,18 +48,20 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  const isAdmin       = user?.role === 'admin';
-  const isZoneManager = user?.role === 'zone_manager';
-  const isStaff       = isAdmin || isZoneManager;
-  const isOwner       = user?.role === 'property_owner';
-  const isManager     = user?.role === 'property_manager';
-  const isStudent     = user?.role === 'student';
-  const isLoggedIn    = !!user;
+  const isAdmin        = user?.role === 'admin';
+  const isZoneManager  = user?.role === 'zone_manager';
+  const isGetoManager  = user?.role === 'geto_manager' || user?.role === 'geto_officer';
+  const isStaff        = isAdmin || isZoneManager || isGetoManager;
+  const isSeniorStaff  = isAdmin || isZoneManager;
+  const isOwner        = user?.role === 'property_owner';
+  const isManager      = user?.role === 'property_manager';
+  const isStudent      = user?.role === 'student';
+  const isLoggedIn     = !!user;
 
   return (
     <AuthContext.Provider value={{
       user, loading, isLoggedIn,
-      isAdmin, isZoneManager, isStaff,
+      isAdmin, isZoneManager, isGetoManager, isStaff, isSeniorStaff,
       isOwner, isManager, isStudent,
       login, staffLogin, register, logout,
     }}>

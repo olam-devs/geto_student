@@ -15,7 +15,7 @@ export default function BookingModal({ property, room, onClose }) {
     if (!date) { setError('Please select a move-in date.'); return; }
     setLoading(true); setError('');
     try {
-      await api.post('/bookings', { property_id: property.id, room_id: room.id, move_in_date: date, notes });
+      await api.post('/student/bookings', { property_id: property.id, room_id: room.id, move_in_date: date, notes });
       setSuccess(true);
     } catch (e) {
       setError(e.response?.data?.message || 'Booking failed. Please try again.');

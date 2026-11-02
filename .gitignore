@@ -39,3 +39,7 @@ npm-debug.log*
 .claude/
 start.bat
 setup-database.bat
+
+# Deploy bundles can contain _config.php with passwords
+*.zip
+scratchpad/

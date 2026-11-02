@@ -12,6 +12,7 @@ const Auth         = lazy(() => import('./pages/Auth'));
 const AdminPortal  = lazy(() => import('./pages/AdminPortal'));
 const OwnerPortal  = lazy(() => import('./pages/OwnerPortal'));
 const StudentDash  = lazy(() => import('./pages/StudentDashboard'));
+const CheckIn      = lazy(() => import('./pages/CheckIn'));
 
 function Loading() {
   return <div className="flex items-center justify-center min-h-[60vh] text-primary font-semibold">Loading...</div>;
@@ -72,6 +73,7 @@ function AppRoutes() {
         <Route path="/" element={<PublicLayout><Home /></PublicLayout>} />
         <Route path="/find-room" element={<PublicLayout><FindRoom /></PublicLayout>} />
         <Route path="/browse"   element={<Navigate to="/find-room" replace />} />
+        <Route path="/checkin/:token" element={<PublicLayout><CheckIn /></PublicLayout>} />
 
         {/* ── Auth (frontend users: student / owner / manager) ── */}
         <Route path="/auth" element={

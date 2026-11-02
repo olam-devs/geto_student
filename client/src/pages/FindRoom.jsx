@@ -1,15 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { SlidersHorizontal, X, CheckCircle2, Building2 } from 'lucide-react';
+import { SlidersHorizontal, X, CheckCircle2, Building2, ArrowUpDown, ChevronDown } from 'lucide-react';
 import api from '../api';
 import PropertyCard from '../components/PropertyCard';
 import PropertyModal from '../components/PropertyModal';
+
+const PAGE_SIZE = 18;
 
 export default function FindRoom() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [universities, setUnis]  = useState([]);
   const [properties, setProps]   = useState([]);
   const [loading, setLoading]    = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore]    = useState(false);
   const [selectedProp, setSelectedProp] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -17,9 +21,13 @@ export default function FindRoom() {
     q:              searchParams.get('q')             || '',
     university_id:  searchParams.get('university_id') || '',
     room_type:      searchParams.get('room_type')     || '',
+    property_type:  searchParams.get('property_type') || '',
     price_max:      searchParams.get('price_max')     || '',
     verified_only:  searchParams.get('verified_only') || '',
+    furnished:      searchParams.get('furnished')     || '',
+    bathroom_type:  searchParams.get('bathroom_type') || '',
     area:           searchParams.get('area')          || '',
+    sort:           searchParams.get('sort')          || '',
   });
 
   // Sync URL params → filter state when navbar search navigates here
@@ -29,9 +37,13 @@ export default function FindRoom() {
         q:             searchParams.get('q')             || '',
         university_id: searchParams.get('university_id') || '',
         room_type:     searchParams.get('room_type')     || '',
+        property_type: searchParams.get('property_type') || '',
         price_max:     searchParams.get('price_max')     || '',
         verified_only: searchParams.get('verified_only') || '',
+        furnished:     searchParams.get('furnished')     || '',
+        bathroom_type: searchParams.get('bathroom_type') || '',
         area:          searchParams.get('area')          || '',
+        sort:          searchParams.get('sort')          || '',
       };
       return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
     });
@@ -43,19 +55,35 @@ export default function FindRoom() {
     api.get('/admin/room-types').then(r => { if (r.data?.length) setRoomTypes(r.data.map(t => t.name)); }).catch(() => {});
   }, []);
 
+  const doFetch = useCallback((currentFilters, offset = 0) => {
+    const params = { ...Object.fromEntries(Object.entries(currentFilters).filter(([,v]) => v)), limit: PAGE_SIZE + 1, offset };
+    return api.get('/properties', { params }).then(r => {
+      const data = r.data;
+      const more = data.length > PAGE_SIZE;
+      setHasMore(more);
+      return data.slice(0, PAGE_SIZE);
+    });
+  }, []);
+
   const fetchProperties = useCallback(() => {
     setLoading(true);
-    const params = Object.fromEntries(Object.entries(filters).filter(([,v]) => v));
-    api.get('/properties', { params })
-      .then(r => { setProps(r.data); setLoading(false); })
+    doFetch(filters, 0)
+      .then(results => { setProps(results); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [filters]);
+  }, [filters, doFetch]);
+
+  const loadMore = useCallback(() => {
+    setLoadingMore(true);
+    doFetch(filters, properties.length)
+      .then(results => { setProps(prev => [...prev, ...results]); setLoadingMore(false); })
+      .catch(() => setLoadingMore(false));
+  }, [filters, properties.length, doFetch]);
 
   useEffect(() => { fetchProperties(); }, [fetchProperties]);
 
   const setFilter = (key, val) => setFilters(f => ({ ...f, [key]: val }));
-  const clearFilters = () => setFilters({ q:'', university_id:'', room_type:'', price_max:'', verified_only:'', area:'' });
-  const activeCount = Object.values(filters).filter(Boolean).length;
+  const clearFilters = () => setFilters({ q:'', university_id:'', room_type:'', property_type:'', price_max:'', verified_only:'', furnished:'', bathroom_type:'', area:'', sort:'' });
+  const activeCount = Object.values(filters).filter(v => v && v !== '').length;
 
   const priceOptions = [
     { label: 'Under TZS 150,000', value: '150000' },
@@ -63,6 +91,8 @@ export default function FindRoom() {
     { label: 'Under TZS 350,000', value: '350000' },
     { label: 'Under TZS 500,000', value: '500000' },
   ];
+
+  const propertyTypes = ['Hostel','Apartment','House','Bedsitter','Studio','Self-Contained'];
 
   const FilterPanel = () => (
     <div className="space-y-5">
@@ -74,10 +104,25 @@ export default function FindRoom() {
         </select>
       </div>
       <div>
+        <label className="label">Property Type</label>
+        <select value={filters.property_type} onChange={e => setFilter('property_type', e.target.value)} className="input">
+          <option value="">Any Type</option>
+          {propertyTypes.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      <div>
         <label className="label">Room Type</label>
         <select value={filters.room_type} onChange={e => setFilter('room_type', e.target.value)} className="input">
           <option value="">Any Room Type</option>
-          {roomTypes.map(r => <option key={r}>{r}</option>)}
+          {roomTypes.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="label">Bathroom</label>
+        <select value={filters.bathroom_type} onChange={e => setFilter('bathroom_type', e.target.value)} className="input">
+          <option value="">Any</option>
+          <option value="Private">Private bathroom</option>
+          <option value="Shared">Shared bathroom</option>
         </select>
       </div>
       <div>
@@ -92,6 +137,14 @@ export default function FindRoom() {
         <input type="text" value={filters.area} onChange={e => setFilter('area', e.target.value)}
           placeholder="e.g. Ubungo, Ilala…" className="input" />
       </div>
+      <label className="flex items-center gap-3 cursor-pointer">
+        <div className="relative">
+          <input type="checkbox" checked={filters.furnished === 'true'} onChange={e => setFilter('furnished', e.target.checked ? 'true' : '')} className="sr-only" />
+          <div className={`w-10 h-5 rounded-full transition-colors ${filters.furnished === 'true' ? 'bg-accent' : 'bg-slate-300'}`}/>
+          <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${filters.furnished === 'true' ? 'translate-x-5' : ''}`}/>
+        </div>
+        <span className="text-sm font-medium text-slate-700">Furnished only</span>
+      </label>
       <label className="flex items-center gap-3 cursor-pointer">
         <div className="relative">
           <input type="checkbox" checked={filters.verified_only === 'true'} onChange={e => setFilter('verified_only', e.target.checked ? 'true' : '')} className="sr-only" />
@@ -112,8 +165,8 @@ export default function FindRoom() {
     <div className="min-h-screen bg-sand-50">
       {/* Slim page header */}
       <div className="border-b border-slate-200 bg-white px-4 sm:px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-          <h1 className="font-display font-bold text-lg text-slate-900">Tafuta Chumba</h1>
+        <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4">
+          <h1 className="font-display font-bold text-lg text-slate-900">Find a Room</h1>
           <button onClick={() => setFiltersOpen(v => !v)}
             className={`md:hidden inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-colors border ${filtersOpen ? 'bg-accent-600 text-white border-accent-600' : 'bg-white text-slate-700 border-slate-200'}`}>
             <SlidersHorizontal size={15}/>
@@ -122,7 +175,7 @@ export default function FindRoom() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-8">
         <div className="flex gap-8">
           {/* Desktop sidebar */}
           <aside className="hidden md:block w-64 shrink-0">
@@ -154,11 +207,22 @@ export default function FindRoom() {
 
           {/* Main grid */}
           <div className="flex-1 min-w-0">
-            {/* Result count */}
-            <div className="flex items-center justify-between mb-5">
+            {/* Result count + sort */}
+            <div className="flex items-center justify-between mb-5 gap-3">
               <p className="text-sm text-slate-500">
                 {loading ? 'Loading…' : <><strong className="text-slate-800">{properties.length}</strong> {properties.length === 1 ? 'property' : 'properties'} found</>}
               </p>
+              <div className="flex items-center gap-2 shrink-0">
+                <ArrowUpDown size={14} className="text-slate-400"/>
+                <select value={filters.sort} onChange={e => setFilter('sort', e.target.value)}
+                  className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 bg-white focus:ring-1 focus:ring-primary/30 outline-none">
+                  <option value="">Most Relevant</option>
+                  <option value="price_asc">Price: Low to High</option>
+                  <option value="price_desc">Price: High to Low</option>
+                  <option value="newest">Newest First</option>
+                  <option value="verified">Verified First</option>
+                </select>
+              </div>
             </div>
 
             {loading ? (
@@ -182,11 +246,21 @@ export default function FindRoom() {
                 <button onClick={clearFilters} className="btn-outline">Clear filters</button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                {properties.map(p => (
-                  <PropertyCard key={p.id} property={p} onClick={() => setSelectedProp(p.id)} />
-                ))}
-              </div>
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {properties.map(p => (
+                    <PropertyCard key={p.id} property={p} onClick={() => setSelectedProp(p.id)} />
+                  ))}
+                </div>
+                {hasMore && (
+                  <div className="mt-8 flex justify-center">
+                    <button onClick={loadMore} disabled={loadingMore}
+                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 bg-white hover:bg-slate-50 transition-colors disabled:opacity-50">
+                      {loadingMore ? 'Loading…' : <><ChevronDown size={15}/>Load More Properties</>}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

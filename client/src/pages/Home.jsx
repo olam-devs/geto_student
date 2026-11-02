@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CheckCircle2, Shield, Clock, Star, ArrowRight, MapPin, ChevronRight,
@@ -8,51 +8,93 @@ import api from '../api';
 import PropertyCard from '../components/PropertyCard';
 import PropertyModal from '../components/PropertyModal';
 
-// ── 4-photo grid: each cell has its own independent photo set ──
-const PHOTO_SETS = [
-  [
-    'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=420&fit=crop&fm=webp&q=75',
-    'https://images.unsplash.com/photo-1555854877-bab0e564b8d5?w=600&h=420&fit=crop&fm=webp&q=75',
-    'https://images.unsplash.com/photo-1540518614846-7eded433c457?w=600&h=420&fit=crop&fm=webp&q=75',
-  ],
-  [
-    'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=600&h=420&fit=crop&fm=webp&q=75',
-    'https://images.unsplash.com/photo-1567767292278-a4f21aa2d36e?w=600&h=420&fit=crop&fm=webp&q=75',
-    'https://images.unsplash.com/photo-1556909212-d5b604d0c90d?w=600&h=420&fit=crop&fm=webp&q=75',
-  ],
-  [
-    'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=420&fit=crop&fm=webp&q=75',
-    'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600&h=420&fit=crop&fm=webp&q=75',
-    'https://images.unsplash.com/photo-1524758631624-e2822e304c36?w=600&h=420&fit=crop&fm=webp&q=75',
-  ],
-  [
-    'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=600&h=420&fit=crop&fm=webp&q=75',
-    'https://images.unsplash.com/photo-1574362848149-11496d93a7c7?w=600&h=420&fit=crop&fm=webp&q=75',
-    'https://images.unsplash.com/photo-1493809842364-78817add7ffb?w=600&h=420&fit=crop&fm=webp&q=75',
-  ],
+// ── Hero showcase: cycles through property types ──────────────
+const HERO_SLIDES = [
+  {
+    photo: 'https://images.unsplash.com/photo-1555854877-bab0e564b8d5?w=800&h=600&fit=crop&fm=webp&q=80',
+    type: 'Student Hostel', name: 'Ubungo Student Lodge', area: 'Ubungo · Near UDSM',
+    price: '150,000', room: 'Single Room', bath: 'Shared',
+  },
+  {
+    photo: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800&h=600&fit=crop&fm=webp&q=80',
+    type: 'Apartment', name: 'Ardhi View Apartments', area: 'Kinondoni · Near ARU',
+    price: '300,000', room: 'Studio', bath: 'Private',
+  },
+  {
+    photo: 'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800&h=600&fit=crop&fm=webp&q=80',
+    type: 'Student House', name: 'MUHAS Comfort House', area: 'Ilala · Near MUHAS',
+    price: '180,000', room: 'Single Room', bath: 'Shared',
+  },
+  {
+    photo: 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=800&h=600&fit=crop&fm=webp&q=80',
+    type: 'Bedsitter', name: 'DIT Baraka Self-Contained', area: 'Ilala · Near DIT',
+    price: '220,000', room: 'Bedsitter', bath: 'Private',
+  },
 ];
-const INTERVALS = [3600, 4400, 5200, 3900];
 
-function PhotoCell({ photos, interval, badge = false }) {
+function HeroShowcase({ propCount }) {
   const [cur, setCur] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setCur(i => (i + 1) % photos.length), interval);
+    const t = setInterval(() => setCur(i => (i + 1) % HERO_SLIDES.length), 4000);
     return () => clearInterval(t);
-  }, [interval, photos.length]);
-
+  }, []);
+  const slide = HERO_SLIDES[cur];
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-slate-100" style={{ aspectRatio: '4/3' }}>
-      {photos.map((src, i) => (
-        <img key={src} src={src} alt=""
-          className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
-          style={{ opacity: cur === i ? 1 : 0 }}
-        />
-      ))}
-      {badge && (
-        <div className="absolute top-2.5 left-2.5 bg-verified/90 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1">
-          <CheckCircle2 size={9}/> GETO VERIFIED
+    <div className="relative w-full max-w-sm mx-auto lg:max-w-none">
+      {/* Main card */}
+      <div className="rounded-3xl overflow-hidden shadow-2xl border border-white/60 bg-white"
+        style={{ transform: 'rotate(1.5deg)' }}>
+        {/* Photo area */}
+        <div className="relative overflow-hidden" style={{ aspectRatio: '4/3' }}>
+          {HERO_SLIDES.map((s, i) => (
+            <img key={s.photo} src={s.photo} alt={s.name}
+              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
+              style={{ opacity: cur === i ? 1 : 0 }}
+            />
+          ))}
+          {/* Gradient */}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"/>
+          {/* Badges */}
+          <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-sm text-primary text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-sm">
+            {slide.type}
+          </div>
+          <div className="absolute top-3 right-3 bg-verified/90 backdrop-blur-sm text-white text-[10px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1">
+            <CheckCircle2 size={10}/> GETO VERIFIED
+          </div>
+          {/* Slide dots */}
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1">
+            {HERO_SLIDES.map((_, i) => (
+              <button key={i} onClick={() => setCur(i)}
+                className={`w-1.5 h-1.5 rounded-full transition-all ${i === cur ? 'bg-white w-4' : 'bg-white/50'}`}/>
+            ))}
+          </div>
         </div>
-      )}
+        {/* Property details */}
+        <div className="p-4 bg-white">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="font-display font-bold text-slate-900 text-base leading-tight truncate">{slide.name}</h3>
+              <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                <MapPin size={10}/>{slide.area}
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-[10px] text-slate-400">From</p>
+              <p className="font-bold text-accent-600 text-base leading-tight">TZS {slide.price}<span className="text-[10px] text-slate-400 font-normal">/mo</span></p>
+            </div>
+          </div>
+          <div className="flex gap-3 mt-3 text-xs text-slate-500">
+            <span className="flex items-center gap-1"><span>🛏</span>{slide.room}</span>
+            <span className="flex items-center gap-1"><span>🚿</span>{slide.bath}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Floating verified count pill */}
+      <div className="absolute -bottom-4 -left-4 bg-primary-900 text-white rounded-2xl px-4 py-3 shadow-xl z-10">
+        <p className="text-[10px] text-white/50 font-semibold uppercase tracking-wider">Verified Properties</p>
+        <p className="font-bold text-sm text-accent-400">{propCount || 5}+ available now</p>
+      </div>
     </div>
   );
 }
@@ -98,7 +140,7 @@ export default function Home() {
         <div className="absolute bottom-0 left-0 w-[400px] h-[400px] pointer-events-none opacity-[0.04]"
           style={{ background: 'radial-gradient(circle, #C95F2A 0%, transparent 65%)', transform: 'translate(-30%,30%)' }}/>
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 lg:py-20">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-12 lg:py-20">
           <div className="grid lg:grid-cols-[1fr_440px] xl:grid-cols-[1fr_500px] gap-10 lg:gap-16 items-center">
 
             {/* ── Left: text ── */}
@@ -155,47 +197,9 @@ export default function Home() {
               </div>
             </div>
 
-            {/* ── Right: overlapping/rotated photo cards ── */}
-            <div className="order-1 lg:order-2">
-              <div className="relative" style={{ height: '400px' }}>
-                {/* Card A — back-left, rotated negative */}
-                <div className="absolute rounded-2xl overflow-hidden shadow-xl"
-                  style={{ top: 0, left: 0, width: '72%', height: '52%', transform: 'rotate(-5deg)', zIndex: 1 }}>
-                  <PhotoCell photos={PHOTO_SETS[3]} interval={INTERVALS[3]}/>
-                </div>
-                {/* Card B — back-right, rotated positive */}
-                <div className="absolute rounded-2xl overflow-hidden shadow-xl"
-                  style={{ top: '10px', right: 0, width: '64%', height: '48%', transform: 'rotate(4deg)', zIndex: 2 }}>
-                  <PhotoCell photos={PHOTO_SETS[2]} interval={INTERVALS[2]}/>
-                </div>
-                {/* Card C — front-left, slight negative tilt */}
-                <div className="absolute rounded-2xl overflow-hidden shadow-2xl"
-                  style={{ bottom: '10px', left: 0, width: '68%', height: '55%', transform: 'rotate(-2deg)', zIndex: 3 }}>
-                  <PhotoCell photos={PHOTO_SETS[0]} interval={INTERVALS[0]} badge/>
-                </div>
-                {/* Card D — front-right, slight positive tilt */}
-                <div className="absolute rounded-2xl overflow-hidden shadow-2xl"
-                  style={{ bottom: 0, right: 0, width: '60%', height: '50%', transform: 'rotate(3deg)', zIndex: 4 }}>
-                  <PhotoCell photos={PHOTO_SETS[1]} interval={INTERVALS[1]}/>
-                </div>
-              </div>
-
-              {/* Floating verified bar below grid */}
-              <div className="mt-3 bg-primary-900 text-white rounded-2xl px-5 py-3.5 flex items-center justify-between shadow-lift">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-verified/20 flex items-center justify-center shrink-0">
-                    <CheckCircle2 size={16} className="text-green-300"/>
-                  </div>
-                  <div>
-                    <p className="text-xs text-white/60 font-medium">Geto Verified</p>
-                    <p className="text-sm font-bold">{propCount || 24}+ verified properties</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-white/60">Starting from</p>
-                  <p className="text-sm font-bold text-accent-400">150,000 TZS/mo</p>
-                </div>
-              </div>
+            {/* ── Right: single property showcase card ── */}
+            <div className="order-1 lg:order-2 pb-6">
+              <HeroShowcase propCount={propCount} />
             </div>
           </div>
         </div>
@@ -203,7 +207,7 @@ export default function Home() {
 
       {/* ─── TRUST BAR ─── */}
       <section className="border-y border-slate-100 bg-slate-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap gap-4 justify-center sm:justify-between items-center">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 flex flex-wrap gap-4 justify-center sm:justify-between items-center">
           <div className="flex items-center gap-2 text-sm text-slate-600"><CheckCircle2 size={15} className="text-verified"/> <span className="font-semibold">Verified Properties</span></div>
           <div className="w-px h-4 bg-slate-200 hidden sm:block"/>
           <div className="flex items-center gap-2 text-sm text-slate-600"><Shield size={15} className="text-primary-700"/> <span className="font-semibold">No Fake Listings</span></div>
@@ -214,38 +218,29 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ─── UNIVERSITIES ─── */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 py-14">
-        <div className="flex items-end justify-between mb-8">
-          <div>
-            <p className="section-eyebrow">Browse by Campus</p>
-            <h2 className="section-title text-2xl sm:text-3xl">Find a room near your university</h2>
+      {/* ─── UNIVERSITY MARQUEE BELT ─── */}
+      {universities.length > 0 && (
+        <div className="border-y border-slate-100 bg-slate-50 py-3 overflow-hidden select-none">
+          <style>{`
+            @keyframes marquee { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+            .marquee-inner { display:flex; width:max-content; animation:marquee 30s linear infinite; }
+            .marquee-inner:hover { animation-play-state:paused; }
+          `}</style>
+          <div className="marquee-inner gap-0">
+            {[...universities, ...universities].map((u, i) => (
+              <button key={i} onClick={() => navigate(`/find-room?university_id=${u.id}`)}
+                className="inline-flex items-center gap-2 px-5 py-1.5 text-slate-500 hover:text-primary-700 text-xs font-semibold whitespace-nowrap transition-colors border-r border-slate-200 last:border-r-0">
+                <GraduationCap size={11} className="text-primary-400 shrink-0"/>
+                {u.short_name || u.name}
+              </button>
+            ))}
           </div>
-          <button onClick={() => navigate('/find-room')}
-            className="hidden sm:flex items-center gap-1 text-sm font-semibold text-accent-600 hover:text-accent-700 transition-colors">
-            View all <ArrowRight size={14}/>
-          </button>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {universities.map(u => (
-            <button key={u.id} onClick={() => navigate(`/find-room?university_id=${u.id}`)}
-              className="bg-white border border-slate-200 rounded-xl p-4 text-left hover:border-accent-500 hover:shadow-md transition-all duration-200 group">
-              <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center mb-3 group-hover:bg-accent-50 transition-colors">
-                <GraduationCap size={18} className="text-primary-700 group-hover:text-accent-600 transition-colors"/>
-              </div>
-              <p className="font-display font-bold text-slate-900 text-sm">{u.short_name}</p>
-              <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{u.name}</p>
-              <p className="text-xs text-accent-600 font-semibold mt-2">
-                {u.property_count || 0} {u.property_count === 1 ? 'listing' : 'listings'}
-              </p>
-            </button>
-          ))}
-        </div>
-      </section>
+      )}
 
       {/* ─── HOW IT WORKS ─── */}
       <section className="bg-primary-900 py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6">
           <div className="text-center mb-12">
             <p className="text-xs font-bold uppercase tracking-widest text-accent-400 mb-2">How It Works</p>
             <h2 className="font-display font-bold text-3xl text-white">From search to move-in — 5 steps</h2>
@@ -266,7 +261,7 @@ export default function Home() {
       </section>
 
       {/* ─── FEATURED PROPERTIES ─── */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 py-14">
+      <section className="max-w-[1440px] mx-auto px-4 sm:px-6 py-14">
         <div className="flex items-end justify-between mb-8">
           <div>
             <p className="section-eyebrow">Geto Verified</p>
@@ -293,10 +288,10 @@ export default function Home() {
 
       {/* ─── WHY GETO ─── */}
       <section className="bg-sand-100 border-y border-sand-200 py-14">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6">
           <div className="text-center mb-10">
             <p className="section-eyebrow">Why Geto Student?</p>
-            <h2 className="section-title text-2xl sm:text-3xl">Tanzania's first verified student platform</h2>
+            <h2 className="section-title text-2xl sm:text-3xl">Verified Offcampus student accommodation Platform in Tanzania</h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {trustItems.map(({ Icon, color, bg, label, desc }) => (
@@ -313,7 +308,7 @@ export default function Home() {
       </section>
 
       {/* ─── OWNER CTA ─── */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 py-14">
+      <section className="max-w-[1440px] mx-auto px-4 sm:px-6 py-14">
         <div className="relative bg-primary-900 rounded-2xl p-8 sm:p-12 flex flex-col sm:flex-row items-center justify-between gap-6 overflow-hidden">
           <div className="absolute -right-16 -top-16 w-72 h-72 rounded-full bg-white/5 pointer-events-none"/>
           <div className="absolute -right-4 -bottom-14 w-52 h-52 rounded-full bg-accent-600/15 pointer-events-none"/>

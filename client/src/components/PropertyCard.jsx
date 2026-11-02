@@ -1,10 +1,11 @@
 import React from 'react';
-import { MapPin, CheckCircle2, Clock, Building2 } from 'lucide-react';
+import { MapPin, CheckCircle2, Clock, Building2, Star } from 'lucide-react';
 
 export default function PropertyCard({ property, onClick }) {
   const {
     name, university_name, university_short, area,
     price_from, verified, main_photo, property_type, highlight,
+    avg_rating, review_count,
   } = property;
 
   const fmt = (n) => n ? Number(n).toLocaleString('en-TZ') : '—';
@@ -54,11 +55,18 @@ export default function PropertyCard({ property, onClick }) {
           <div>
             <span className="text-[10px] text-slate-400 block">From</span>
             <span className="font-display font-bold text-slate-900 text-base">
-              {price_from ? `TZS ${fmt(price_from)}` : 'Price on request'}
+              {price_from ? `TZS ${fmt(price_from)}` : 'TZS —'}
               <span className="text-[11px] font-normal text-slate-400">/mo</span>
             </span>
           </div>
-          <span className="text-xs font-semibold bg-primary text-white px-3 py-1.5 rounded-lg group-hover:bg-primary/90 transition-colors">Book Now</span>
+          <div className="flex flex-col items-end gap-1">
+            {avg_rating > 0 && (
+              <span className="flex items-center gap-0.5 text-amber-500 text-[11px] font-semibold">
+                <Star size={11} fill="currentColor"/> {avg_rating} <span className="text-slate-400 font-normal">({review_count})</span>
+              </span>
+            )}
+            <span className="text-xs font-semibold bg-primary text-white px-3 py-1.5 rounded-lg group-hover:bg-primary/90 transition-colors">Book Now</span>
+          </div>
         </div>
       </div>
     </div>
