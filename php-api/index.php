@@ -1,12 +1,20 @@
 <?php
 require __DIR__ . '/_config.php';
 
+// Tanzania time (EAT, UTC+3, no daylight saving). The server's own clock is US time,
+// which would make "today", daily stats and stored dates 8 hours off.
+date_default_timezone_set('Africa/Dar_es_Salaam');
+
 // Snippe fee rate (defined here in case _config.php predates this deploy)
 if (!defined('GETO_FEE_RATE')) define('GETO_FEE_RATE', 0.75);
 
+// Unexpected errors: full details go to the server error log, visitors get a plain message
+// (raw database errors would reveal table names and the database user).
 set_exception_handler(function(\Throwable $e) {
+    $ref = substr(bin2hex(random_bytes(4)), 0, 8);
+    error_log("Geto API error $ref: ".$e->getMessage().' at '.basename($e->getFile()).':'.$e->getLine());
     http_response_code(500);
-    echo json_encode(['error'=>$e->getMessage(),'file'=>basename($e->getFile()),'line'=>$e->getLine()], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['message'=>"Something went wrong on our side. Please try again. (ref $ref)", 'ref'=>$ref], JSON_UNESCAPED_UNICODE);
     exit;
 });
 
@@ -69,7 +77,9 @@ function db(): PDO {
         'mysql:host='.DB_HOST.';dbname='.DB_NAME.';charset=utf8mb4', DB_USER, DB_PASS,
         [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
          PDO::MYSQL_ATTR_INIT_COMMAND=>"SET NAMES utf8mb4"]
-    ); }
+    );
+      $pdo->exec("SET time_zone = '+03:00'");   // Tanzania time for NOW(), CURDATE() and TIMESTAMP columns
+    }
     return $pdo;
 }
 function q(string $sql, array $p = []): array  { $st = db()->prepare($sql); $st->execute($p); return $st->fetchAll(); }
@@ -157,6 +167,9 @@ function migrate(): void {
         // Owner opt-in for automatic deposit collection + payout via Snippe
         "ALTER TABLE owner_payout_profiles ADD COLUMN auto_payout_enabled TINYINT(1) NOT NULL DEFAULT 0",
         "ALTER TABLE owner_payout_profiles ADD COLUMN auto_payout_consented_at TIMESTAMP NULL",
+        // House availability set by staff: 'full' houses show a Full badge and sort last
+        "ALTER TABLE properties ADD COLUMN availability ENUM('available','full') NOT NULL DEFAULT 'available'",
+        "ALTER TABLE properties ADD COLUMN availability_updated_at TIMESTAMP NULL",
     ] as $sql) { try { $pdo->exec($sql); } catch(\PDOException $e) {} }
     // Zone coverage table — links a zone to specific regions/districts/wards
     try { $pdo->exec("CREATE TABLE IF NOT EXISTS zone_coverage (
@@ -250,6 +263,11 @@ function migrate(): void {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_date (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } catch(\PDOException $e) {}
+    // Traffic source, recorded only on the first page of a visit (NULL on later pages)
+    foreach ([
+        "ALTER TABLE page_views ADD COLUMN source VARCHAR(40) NULL",
+        "ALTER TABLE page_views ADD COLUMN referrer_host VARCHAR(120) NULL",
+    ] as $sql) { try { $pdo->exec($sql); } catch(\PDOException $e) {} }
     // ── Snippe payment tables ─────────────────────────────────────
     try { $pdo->exec("CREATE TABLE IF NOT EXISTS owner_payout_profiles (
         id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -463,10 +481,13 @@ function makeReferralCode(string $name): string {
 }
 
 // ─── SMS Helper ────────────────────────────────────────────────
-function sendSMS(string $phone, string $text, string $reference = ''): bool {
+// $logText: what to store in sms_logs instead of $text (to keep passwords and reset links out of the database)
+function sendSMS(string $phone, string $text, string $reference = '', ?string $logText = null): bool {
     if (!defined('SMS_TOKEN') || !SMS_TOKEN) return false;
     $ref = $reference ?: 'geto'.time();
-    $ch  = curl_init('https://messaging-service.co.tz/api/sms/v2/text/single');
+    // Next SMS expects 255XXXXXXXXX; numbers are stored as typed (07…, +255…), so convert here.
+    $to  = ltrim(normalizePhone($phone), '+');
+    $ch  = curl_init(defined('SMS_API_URL') ? SMS_API_URL : 'https://messaging-service.co.tz/api/sms/v2/text/single');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST           => true,
@@ -475,18 +496,38 @@ function sendSMS(string $phone, string $text, string $reference = ''): bool {
             'Content-Type: application/json',
             'Accept: application/json',
         ],
-        CURLOPT_POSTFIELDS  => json_encode(['from'=>SMS_SENDER,'to'=>$phone,'text'=>$text,'flash'=>0,'reference'=>$ref]),
+        CURLOPT_POSTFIELDS  => json_encode(['from'=>SMS_SENDER,'to'=>$to,'text'=>$text,'flash'=>0,'reference'=>$ref]),
         CURLOPT_TIMEOUT     => 10,
         CURLOPT_SSL_VERIFYPEER => true,
     ]);
     $resp = curl_exec($ch);
+    $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $cerr = curl_error($ch);
     curl_close($ch);
     $json   = json_decode((string)$resp, true);
-    $status = $json['messages'][0]['status']['name'] ?? 'UNKNOWN';
+    // Keep the reason when there is no normal reply, so the SMS log shows why it failed
+    $status = $json['messages'][0]['status']['name']
+           ?? ($cerr ? 'NETWORK_ERROR: '.substr($cerr, 0, 60) : 'HTTP_'.$http.': '.substr((string)($json['message'] ?? $resp), 0, 60));
     $msgId  = $json['messages'][0]['messageId'] ?? null;
     try { qn('INSERT INTO sms_logs (recipient_phone,message,reference,status,message_id) VALUES (?,?,?,?,?)',
-              [$phone, $text, $ref, $status, $msgId]); } catch (Exception) {}
+              [$to, $logText ?? $text, $ref, substr($status, 0, 50), $msgId]); } catch (Exception) {}
     return isset($json['messages'][0]['status']['groupId']);
+}
+
+// Text sent to a phone in the last $minutes whose reference starts with $refPrefix (to stop SMS spam).
+function recentSmsCount(string $refPrefix, int $minutes): int {
+    try {
+        return (int)(q1("SELECT COUNT(*) AS cnt FROM sms_logs WHERE reference LIKE ? AND sent_at >= NOW() - INTERVAL ? MINUTE",
+                        [$refPrefix.'%', $minutes])['cnt'] ?? 0);
+    } catch (Exception) { return 0; }
+}
+
+// Plain email through the server's mail system (used as an extra channel for password resets).
+function sendEmail(string $to, string $subject, string $text): bool {
+    if (!filter_var($to, FILTER_VALIDATE_EMAIL)) return false;
+    $from = defined('MAIL_FROM') ? MAIL_FROM : 'no-reply@getostudent.co.tz';
+    $headers = "From: Geto Student <$from>\r\nReply-To: $from\r\nContent-Type: text/plain; charset=UTF-8\r\nMIME-Version: 1.0";
+    return @mail($to, '=?UTF-8?B?'.base64_encode($subject).'?=', $text, $headers, '-f'.$from);
 }
 
 function getAdminPhone(): ?string {
@@ -755,8 +796,8 @@ function routeAuth(array $parts, string $method): void {
         if (empty($b['terms_accepted']) || !$b['terms_accepted'])
             err(400, 'You must accept the Terms & Conditions.');
         if (strlen($b['password']) < 8) err(400, 'Password must be at least 8 characters.');
-        // Phone uniqueness check
-        if (q1('SELECT id FROM users WHERE phone=?', [$b['phone']]))
+        // Phone uniqueness check (any format: 07…, 255…, +255…)
+        if (q1('SELECT id FROM users WHERE phone=?', [$b['phone']]) || usersByPhone($b['phone']))
             err(409, 'Phone number already registered.');
         // Email uniqueness check only if email provided
         $email = !empty($b['email']) ? trim($b['email']) : null;
@@ -816,6 +857,9 @@ function routeAuth(array $parts, string $method): void {
         $user = $isPhone
             ? q1('SELECT u.*, un.name AS university_name FROM users u LEFT JOIN universities un ON u.university_id=un.id WHERE u.phone=?', [$cred])
             : q1('SELECT u.*, un.name AS university_name FROM users u LEFT JOIN universities un ON u.university_id=un.id WHERE u.email=?', [$cred]);
+        // Phone typed in another format (07… vs +255…): match on the last 9 digits if only one user has it
+        if (!$user && $isPhone && count($m = usersByPhone($cred)) === 1)
+            $user = q1('SELECT u.*, un.name AS university_name FROM users u LEFT JOIN universities un ON u.university_id=un.id WHERE u.id=?', [$m[0]['id']]);
         if (!$user) err(401, 'Invalid credentials.');
         if (!checkPwd($b['password'], $user['password_hash'])) err(401, 'Invalid credentials.');
         if (in_array($user['role'], ['admin','zone_manager','geto_manager','geto_officer'])) err(403, 'Use the staff login portal.');
@@ -906,22 +950,36 @@ function routeAuth(array $parts, string $method): void {
         ok(['updated'=>true,'username'=>$uname]);
     }
 
-    // POST /api/auth/forgot-password
+    // POST /api/auth/forgot-password — reset link by SMS, plus email if the account has one.
+    // The sign-in page sends phone_or_email; phone works in any format. Max 3 links per hour per account.
     if ($method === 'POST' && $sub === 'forgot-password') {
-        $email = strtolower(trim($b['email'] ?? ''));
-        if (!$email) err(400, 'Email required.');
-        $user = q1("SELECT id,name,phone FROM users WHERE email=? AND status='active'", [$email]);
-        if ($user) {
+        $cred = trim((string)($b['phone_or_email'] ?? $b['email'] ?? $b['phone'] ?? ''));
+        if ($cred === '') err(400, 'Enter your phone number or email.');
+        if (str_contains($cred, '@')) {
+            $user = q1("SELECT id,name,phone,email FROM users WHERE email=? AND status='active'", [strtolower($cred)]);
+        } else {
+            $m = usersByPhone($cred);
+            $user = (count($m) === 1 && $m[0]['status'] === 'active')
+                ? q1('SELECT id,name,phone,email FROM users WHERE id=?', [$m[0]['id']]) : null;
+        }
+        $recent = $user ? (int)(q1("SELECT COUNT(*) AS cnt FROM password_reset_tokens
+                                    WHERE user_id=? AND created_at >= NOW() - INTERVAL 1 HOUR", [$user['id']])['cnt'] ?? 0) : 0;
+        if ($user && $recent < 3) {
             $token = bin2hex(random_bytes(32));
-            qn('DELETE FROM password_reset_tokens WHERE user_id=?', [$user['id']]);
+            qn('UPDATE password_reset_tokens SET used=1 WHERE user_id=? AND used=0', [$user['id']]);   // only the newest link works
             qn("INSERT INTO password_reset_tokens (user_id,token,expires_at) VALUES (?,?,DATE_ADD(NOW(),INTERVAL 1 HOUR))",
                [$user['id'], $token]);
-            $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-            $host  = $_SERVER['HTTP_HOST'] ?? 'getostudent.co.tz';
-            $resetUrl = "$proto://$host/auth?tab=reset-password&token=$token";
-            sendSMS($user['phone'], "GETO STUDENT: Badilisha nenosiri: $resetUrl (Muda: saa 1)", 'pw-reset-'.$user['id']);
+            // Fixed site address: never build the link from the request's Host header (link-spoofing risk)
+            $resetUrl = (defined('SITE_URL') ? SITE_URL : 'https://getostudent.co.tz') . "/auth?tab=reset-password&token=$token";
+            sendSMS($user['phone'], "GETO STUDENT: Badilisha nenosiri: $resetUrl (Muda: saa 1)", 'pw-reset-'.$user['id'].'-'.time(),
+                    'GETO STUDENT: Badilisha nenosiri: [reset link hidden] (Muda: saa 1)');
+            if (!empty($user['email']))
+                sendEmail($user['email'], 'Geto Student: reset your password',
+                    "Hello {$user['name']},\n\nUse this link to set a new password (valid for 1 hour):\n$resetUrl\n\n"
+                  . "Tumia kiungo hiki kubadilisha nenosiri (kinafanya kazi kwa saa 1).\n\n"
+                  . "If you didn't ask for this, ignore this message.\n\nGeto Student");
         }
-        ok(['message'=>'If your email is registered, you will receive a password reset link via SMS.']);
+        ok(['message'=>'If this phone number or email is registered, a reset link has been sent.']);
     }
 
     // POST /api/auth/reset-password
@@ -1042,7 +1100,7 @@ function routeProperties(array $parts, string $method): void {
     // GET /api/properties — public listing / search
     if ($method === 'GET' && !$id) {
         $sql = "SELECT p.id,p.name,p.property_type,p.area,p.landmark,p.highlight,p.transport_options,
-                       p.verified,p.youtube_video_id,p.views_count,p.created_at,
+                       p.verified,p.youtube_video_id,p.views_count,p.created_at,p.availability,
                        p.nearest_university_id,u.name AS university_name,u.short_name AS university_short,
                        z.code AS zone_code,z.name AS zone_name,c.code AS cluster_code,c.name AS cluster_name,
                        COALESCE(
@@ -1070,6 +1128,7 @@ function routeProperties(array $parts, string $method): void {
         }
         if (!empty($_GET['zone_id'])) { $sql .= ' AND p.zone_id=?'; $params[] = (int)$_GET['zone_id']; }
         if (!empty($_GET['verified_only']) && $_GET['verified_only']==='true') $sql .= ' AND p.verified=1';
+        if (!empty($_GET['available_only']) && $_GET['available_only']==='true') $sql .= " AND p.availability='available'";
         if (!empty($_GET['area'])) { $sql .= ' AND (p.area LIKE ? OR p.landmark LIKE ?)'; $params[] = '%'.$_GET['area'].'%'; $params[] = '%'.$_GET['area'].'%'; }
         if (!empty($_GET['q'])) {
             $sql .= ' AND (p.name LIKE ? OR p.description LIKE ? OR p.area LIKE ? OR p.landmark LIKE ?)';
@@ -1096,11 +1155,12 @@ function routeProperties(array $parts, string $method): void {
         }
         $sql .= ' GROUP BY p.id';
         $sort = $_GET['sort'] ?? '';
-        if ($sort === 'price_asc')  $sql .= ' ORDER BY MIN(r.monthly_price) ASC';
-        elseif ($sort === 'price_desc') $sql .= ' ORDER BY MIN(r.monthly_price) DESC';
-        elseif ($sort === 'newest')     $sql .= ' ORDER BY p.created_at DESC';
-        elseif ($sort === 'verified')   $sql .= ' ORDER BY p.verified DESC, p.created_at DESC';
-        else                            $sql .= ' ORDER BY p.verified DESC, p.created_at DESC';
+        $sql .= " ORDER BY p.availability='full',";   // full houses always go last
+        if ($sort === 'price_asc')  $sql .= ' MIN(r.monthly_price) ASC';
+        elseif ($sort === 'price_desc') $sql .= ' MIN(r.monthly_price) DESC';
+        elseif ($sort === 'newest')     $sql .= ' p.created_at DESC';
+        elseif ($sort === 'verified')   $sql .= ' p.verified DESC, p.created_at DESC';
+        else                            $sql .= ' p.verified DESC, p.created_at DESC';
         $limit = !empty($_GET['limit']) ? min((int)$_GET['limit'], 100) : 60;
         $sql  .= ' LIMIT ' . $limit;
         if (!empty($_GET['offset'])) $sql .= ' OFFSET ' . max(0, (int)$_GET['offset']);
@@ -1307,7 +1367,7 @@ function routePortal(array $parts, string $method): void {
             }
             $pdo->commit();
             created(['message'=>'Property is now live! Contact Geto Student to schedule a verification visit and earn the verified badge.','propertyId'=>$pid]);
-        } catch (Exception $e) { $pdo->rollBack(); err(500, 'Failed to register property: '.$e->getMessage()); }
+        } catch (Exception $e) { $pdo->rollBack(); error_log('Geto API: owner property register failed: '.$e->getMessage()); err(500, 'Could not save the property. Please try again.'); }
     }
 
     // ── GET /api/portal/properties/:id ───────────────────────
@@ -1912,6 +1972,255 @@ function routeStudent(array $parts, string $method): void {
     err(404, 'Student route not found.');
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  Helpers: phone matching, quick accounts, traffic sources, analytics
+// ═══════════════════════════════════════════════════════════════
+
+// Last 9 digits of a Tanzanian number, so 0712…, 255712… and +255 712… all match.
+function phoneKey(string $phone): string {
+    return substr(preg_replace('/\D/', '', $phone), -9);
+}
+
+// Users whose phone matches in any format (at most 2 rows, so callers can spot duplicates).
+function usersByPhone(string $phone): array {
+    $key = phoneKey($phone);
+    if (strlen($key) < 9) return [];
+    return q("SELECT id,name,role,phone,status FROM users
+              WHERE RIGHT(REPLACE(REPLACE(REPLACE(phone,'+',''),' ',''),'-',''), 9)=?
+              ORDER BY id LIMIT 2", [$key]);
+}
+
+// Find a student or owner by phone, or create the account with a temporary password.
+// Call inside a transaction, then sendWelcomeSms() after commit, so a failed save
+// never leaves an account behind or texts a password for an account that doesn't exist.
+function findOrCreateUser(string $name, string $phone, string $role, array $extra = []): array {
+    $name = trim($name); $phone = trim($phone);
+    if ($name === '' || strlen(phoneKey($phone)) < 9) err(400, 'Name and a valid phone number are required.');
+    $allowed = $role === 'student' ? ['student'] : ['property_owner', 'property_manager'];
+    $found = usersByPhone($phone);
+    if ($found) {
+        $u = $found[0];
+        if (!in_array($u['role'], $allowed, true)) {
+            $what = ['student'=>'a student','property_owner'=>'a house owner','property_manager'=>'a house manager'][$u['role']] ?? 'a staff member';
+            err(409, "This phone number already belongs to $what ({$u['name']}).");
+        }
+        return ['id'=>(int)$u['id'], 'name'=>$u['name'], 'phone'=>$u['phone'],
+                'created'=>false, 'temp_password'=>null, 'sms_sent'=>false];
+    }
+    $pw = 'Geto' . random_int(1000, 9999);
+    $id = qx("INSERT INTO users (name,phone,password_hash,role,status,university_id,business_name,referral_code,terms_accepted)
+              VALUES (?,?,?,?,'active',?,?,?,0)",
+             [$name, $phone, hashPwd($pw), $role, $extra['university_id'] ?? null,
+              $extra['business_name'] ?? null, makeReferralCode($name)]);
+    return ['id'=>$id, 'name'=>$name, 'phone'=>$phone, 'created'=>true, 'temp_password'=>$pw, 'sms_sent'=>false];
+}
+
+// Text a newly created account its login details (staff also see the password once).
+function sendWelcomeSms(?array &$acct): void {
+    if (!$acct || !$acct['created']) return;
+    $acct['sms_sent'] = sendSMS(ltrim(normalizePhone($acct['phone']), '+'),
+        "Karibu Geto Student! Ingia https://getostudent.co.tz/auth kwa simu {$acct['phone']} na nenosiri {$acct['temp_password']}",
+        "welcome-{$acct['id']}",
+        "Karibu Geto Student! Ingia https://getostudent.co.tz/auth kwa simu {$acct['phone']} na nenosiri [hidden]");
+}
+
+// Where a visit came from. Returns [label, referring website or null].
+// $ref is document.referrer; $utm is ?utm_source= on the landing link (e.g. ?utm_source=whatsapp).
+function trafficSource(string $ref, string $utm): array {
+    $utm = strtolower(preg_replace('/[^a-z0-9_.-]/i', '', substr($utm, 0, 60)));
+    if ($utm !== '') {
+        $named = ['whatsapp'=>'WhatsApp','wa'=>'WhatsApp','facebook'=>'Facebook','fb'=>'Facebook',
+                  'instagram'=>'Instagram','ig'=>'Instagram','tiktok'=>'TikTok','tt'=>'TikTok',
+                  'youtube'=>'YouTube','yt'=>'YouTube','twitter'=>'X (Twitter)','x'=>'X (Twitter)',
+                  'linkedin'=>'LinkedIn','telegram'=>'Telegram','google'=>'Google','sms'=>'SMS',
+                  'email'=>'Email','qr'=>'Poster / QR code','poster'=>'Poster / QR code'];
+        return [$named[$utm] ?? ucfirst(substr($utm, 0, 40)), null];
+    }
+    $host = strtolower((string)parse_url(substr($ref, 0, 500), PHP_URL_HOST));
+    $host = preg_replace('/^www\./', '', $host);
+    if ($host === '' || $host === 'getostudent.co.tz') return ['Direct', null];
+    $rules = [   // order matters: Email before Google (Gmail app), YouTube before Google
+        'WhatsApp'    => '/(^|\.)(whatsapp\.(com|net)|wa\.me)$|^com\.whatsapp/',
+        'Facebook'    => '/(^|\.)(facebook\.com|fb\.com|fb\.me)$|^com\.facebook/',
+        'Instagram'   => '/(^|\.)instagram\.com$|^com\.instagram/',
+        'TikTok'      => '/(^|\.)tiktok\.com$|^com\.(zhiliaoapp|ss\.android\.ugc)/',
+        'YouTube'     => '/(^|\.)(youtube\.com|youtu\.be)$|^com\.google\.android\.youtube$/',
+        'X (Twitter)' => '/(^|\.)(twitter\.com|x\.com|t\.co)$/',
+        'LinkedIn'    => '/(^|\.)(linkedin\.com|lnkd\.in)$/',
+        'Telegram'    => '/(^|\.)(t\.me|telegram\.(org|me))$|^org\.telegram/',
+        'ChatGPT'     => '/(^|\.)(chatgpt\.com|openai\.com)$/',
+        'Email'       => '/^com\.google\.android\.gm$|(^|\.)mail\.(google|yahoo)\.com$|(^|\.)outlook\.(live|office)\.com$/',
+        'Google'      => '/(^|\.)google\.[a-z.]+$|^com\.google\.android\.googlequicksearchbox$/',
+        'Bing'        => '/(^|\.)bing\.com$/',
+        'Yahoo'       => '/(^|\.)yahoo\.[a-z.]+$/',
+    ];
+    foreach ($rules as $label => $re) if (preg_match($re, $host)) return [$label, $host];
+    return ['Other website', substr($host, 0, 120)];
+}
+
+// Period start dates (oldest first) for the last $n days, weeks (Monday start) or months.
+function analyticsPeriods(string $unit, int $n, DateTimeImmutable $today): array {
+    $start = match ($unit) {
+        'day'   => $today,
+        'week'  => $today->sub(new DateInterval('P' . ((int)$today->format('N') - 1) . 'D')),
+        'month' => $today->modify('first day of this month'),
+    };
+    $keys = [];
+    for ($i = $n - 1; $i >= 0; $i--) {
+        $step = match ($unit) { 'day' => "P{$i}D", 'week' => 'P' . ($i * 7) . 'D', 'month' => "P{$i}M" };
+        $keys[] = $start->sub(new DateInterval($step))->format('Y-m-d');
+    }
+    return $keys;
+}
+
+// Turn numeric strings from MySQL into numbers for the listed columns.
+function intCols(array $rows, array $cols): array {
+    foreach ($rows as &$r) foreach ($cols as $c) if (array_key_exists($c, $r)) $r[$c] = (int)$r[$c];
+    return $rows;
+}
+
+// Admin analytics: visits, sign-ups, bookings and referrals.
+// A "visit" is one person on one day (ip_hash = sha256(ip + date)), so someone who comes
+// back on another day counts again. Staff using the admin panel (/admin…) are left out.
+function adminAnalytics(int $days): array {
+    $today    = new DateTimeImmutable('today');
+    $day      = fn(int $offset) => $today->modify(($offset >= 0 ? '+' : '') . $offset . ' day')->format('Y-m-d');
+    $notStaff = "page NOT LIKE '/admin%'";
+    $tomorrow = $day(1);
+    $since    = $day(1 - $days);   // start of the "last N days" window used by the lists below
+
+    $visits = function (string $from, string $to) use ($notStaff): array {
+        $r = q1("SELECT COUNT(*) AS views, COUNT(DISTINCT ip_hash) AS visits FROM page_views
+                 WHERE $notStaff AND created_at >= ? AND created_at < ?", [$from, $to]);
+        return ['views' => (int)$r['views'], 'visits' => (int)$r['visits']];
+    };
+    $summary = [
+        'today'            => $visits($day(0),   $tomorrow),
+        'yesterday'        => $visits($day(-1),  $day(0)),
+        'last_7_days'      => $visits($day(-6),  $tomorrow),
+        'previous_7_days'  => $visits($day(-13), $day(-6)),
+        'last_30_days'     => $visits($day(-29), $tomorrow),
+        'previous_30_days' => $visits($day(-59), $day(-29)),
+        'all_time'         => $visits('2000-01-01', $tomorrow),
+    ];
+
+    // Charts: one row per day (30), week (12) and month (12), zero-filled
+    $series = [];
+    foreach (['day' => 30, 'week' => 12, 'month' => 12] as $unit => $n) {
+        $keys   = analyticsPeriods($unit, $n, $today);
+        $bucket = fn(string $col) => match ($unit) {
+            'day'   => "DATE($col)",
+            'week'  => "DATE_SUB(DATE($col), INTERVAL WEEKDAY($col) DAY)",
+            'month' => "DATE_FORMAT($col, '%Y-%m-01')",
+        };
+        $kp = $bucket('created_at');
+        $ku = $bucket('u.created_at');
+        $kb = $bucket('b.created_at');
+        $pv = array_column(q("SELECT $kp AS k, COUNT(*) AS views, COUNT(DISTINCT ip_hash) AS visits
+                              FROM page_views WHERE $notStaff AND created_at >= ? GROUP BY k", [$keys[0]]), null, 'k');
+        $su = array_column(q("SELECT $ku AS k, SUM(u.role='student') AS students,
+                                     SUM(u.role IN ('property_owner','property_manager')) AS owners,
+                                     SUM(u.referred_by IS NOT NULL) AS referred
+                              FROM users u WHERE u.role IN ('student','property_owner','property_manager')
+                                AND u.created_at >= ? GROUP BY k", [$keys[0]]), null, 'k');
+        $bk = array_column(q("SELECT $kb AS k, COUNT(*) AS bookings
+                              FROM bookings b WHERE b.created_at >= ? GROUP BY k", [$keys[0]]), null, 'k');
+        $rows = [];
+        foreach ($keys as $k) $rows[] = [
+            'period'   => $k,
+            'views'    => (int)($pv[$k]['views'] ?? 0),
+            'visits'   => (int)($pv[$k]['visits'] ?? 0),
+            'students' => (int)($su[$k]['students'] ?? 0),
+            'owners'   => (int)($su[$k]['owners'] ?? 0),
+            'referred' => (int)($su[$k]['referred'] ?? 0),
+            'bookings' => (int)($bk[$k]['bookings'] ?? 0),
+        ];
+        $series[$unit] = $rows;
+    }
+
+    // Lists for the last $days days
+    $topPages = intCols(q("SELECT CASE WHEN page LIKE '/checkin/%' THEN '/checkin/*' ELSE page END AS path,
+                                  COUNT(*) AS views, COUNT(DISTINCT ip_hash) AS visits
+                           FROM page_views WHERE $notStaff AND created_at >= ?
+                           GROUP BY path ORDER BY views DESC LIMIT 12", [$since]), ['views', 'visits']);
+    $sources = intCols(q("SELECT source, COUNT(*) AS visits FROM page_views
+                          WHERE source IS NOT NULL AND $notStaff AND created_at >= ?
+                          GROUP BY source ORDER BY visits DESC", [$since]), ['visits']);
+    $sites = intCols(q("SELECT referrer_host AS site, COUNT(*) AS visits FROM page_views
+                        WHERE source='Other website' AND created_at >= ?
+                        GROUP BY referrer_host ORDER BY visits DESC LIMIT 10", [$since]), ['visits']);
+
+    // Referrals: a student sharing their code, or a Geto officer signing up a house owner.
+    // "Booked" = the referred student has a booking that wasn't rejected or cancelled.
+    $live = "b.status NOT IN ('rejected','cancelled')";
+    $refTotals = q1("SELECT COUNT(*) AS referred,
+                            SUM(u.role='student') AS students,
+                            SUM(u.role IN ('property_owner','property_manager')) AS owners,
+                            SUM(u.created_at >= ?) AS in_period,
+                            SUM(u.role='student' AND EXISTS(SELECT 1 FROM bookings b WHERE b.student_id=u.id AND $live)) AS students_booked,
+                            SUM(u.role IN ('property_owner','property_manager') AND EXISTS(SELECT 1 FROM properties p WHERE p.owner_id=u.id)) AS owners_listed
+                     FROM users u WHERE u.referred_by IS NOT NULL", [$since]);
+    $topReferrers = intCols(q("SELECT r.id, r.name, r.role, r.referral_code,
+                                      COUNT(*) AS referred,
+                                      SUM(u.role='student') AS students,
+                                      SUM(u.role IN ('property_owner','property_manager')) AS owners,
+                                      SUM(u.created_at >= ?) AS in_period,
+                                      SUM(EXISTS(SELECT 1 FROM bookings b WHERE b.student_id=u.id AND $live)) AS booked,
+                                      SUM(EXISTS(SELECT 1 FROM properties p WHERE p.owner_id=u.id)) AS listed,
+                                      MAX(u.created_at) AS last_referral_at
+                               FROM users u JOIN users r ON r.id=u.referred_by
+                               GROUP BY r.id, r.name, r.role, r.referral_code
+                               ORDER BY referred DESC, last_referral_at DESC LIMIT 15", [$since]),
+                            ['id', 'referred', 'students', 'owners', 'in_period', 'booked', 'listed']);
+    $recentReferrals = intCols(q("SELECT u.id, u.name, u.role, u.created_at,
+                                         r.name AS referrer_name, r.role AS referrer_role,
+                                         EXISTS(SELECT 1 FROM bookings b WHERE b.student_id=u.id AND $live) AS booked,
+                                         EXISTS(SELECT 1 FROM properties p WHERE p.owner_id=u.id) AS listed
+                                  FROM users u JOIN users r ON r.id=u.referred_by
+                                  ORDER BY u.created_at DESC LIMIT 20"), ['id', 'booked', 'listed']);
+    // Bookings that staff entered on behalf of students
+    $staffBookings = intCols(q("SELECT s.id, s.name, s.role, COUNT(*) AS bookings, SUM(b.created_at >= ?) AS in_period
+                                FROM bookings b JOIN users s ON s.id=b.booked_by_staff
+                                GROUP BY s.id, s.name, s.role ORDER BY bookings DESC LIMIT 15", [$since]),
+                             ['id', 'bookings', 'in_period']);
+
+    return [
+        'generated_at'           => date('c'),
+        'timezone'               => date_default_timezone_get(),
+        'days'                   => $days,
+        'since'                  => $since,
+        'tracking_since'         => q1('SELECT MIN(created_at) AS t FROM page_views')['t'] ?? null,
+        'sources_tracking_since' => q1('SELECT MIN(created_at) AS t FROM page_views WHERE source IS NOT NULL')['t'] ?? null,
+        'summary'                => $summary,
+        'series'                 => $series,
+        'top_pages'              => $topPages,
+        'sources'                => $sources,
+        'referring_sites'        => $sites,
+        'referrals'              => [
+            'totals'        => array_map('intval', $refTotals ?? []),
+            'top_referrers' => $topReferrers,
+            'recent'        => $recentReferrals,
+        ],
+        'staff_bookings'         => $staffBookings,
+    ];
+}
+
+// GET /api/site-stats — real numbers for the homepage (public)
+function routeSiteStats(): void {
+    $r = q1("SELECT
+        (SELECT COUNT(*) FROM properties WHERE status='approved') AS houses,
+        (SELECT COUNT(*) FROM properties WHERE status='approved' AND availability='available') AS houses_available,
+        (SELECT COUNT(*) FROM properties WHERE status='approved' AND verified=1) AS houses_verified,
+        (SELECT COUNT(*) FROM universities) AS universities,
+        (SELECT COUNT(*) FROM (
+            SELECT nearest_university_id AS uid FROM properties WHERE status='approved'
+            UNION
+            SELECT pu.university_id FROM property_universities pu
+              JOIN properties p ON p.id=pu.property_id WHERE p.status='approved'
+         ) t) AS universities_with_houses");
+    ok(array_map('intval', $r));
+}
+
 // ─── /api/admin/*  — Admin & Zone Manager backend portal ───────
 function routeAdmin(array $parts, string $method): void {
     $sub  = $parts[1] ?? '';
@@ -2040,9 +2349,52 @@ function routeAdmin(array $parts, string $method): void {
             'visits_today'=>$visits_today,'visits_total'=>$visits_total]);
     }
 
+    // ── GET /api/admin/analytics?days=30 — visits, sign-ups, bookings, referrals (admin only) ──
+    if ($method === 'GET' && $sub === 'analytics') {
+        if (!$isAdmin) err(403, 'Admin only.');
+        ok(adminAnalytics(max(1, min(365, (int)($_GET['days'] ?? 30)))));
+    }
+
+    // ── GET /api/admin/sms-log — recent SMS and delivery status (admin only) ──
+    if ($method === 'GET' && $sub === 'sms-log') {
+        if (!$isAdmin) err(403, 'Admin only.');
+        ok(['configured' => defined('SMS_TOKEN') && SMS_TOKEN !== '',
+            'by_status'  => intCols(q("SELECT status, COUNT(*) AS n, MAX(sent_at) AS last FROM sms_logs
+                                       WHERE sent_at >= NOW() - INTERVAL 30 DAY GROUP BY status ORDER BY n DESC"), ['n']),
+            'recent'     => q("SELECT id, sent_at, recipient_phone, SUBSTRING_INDEX(reference,'-',1) AS kind, status,
+                                      CASE WHEN reference LIKE 'pw-reset-%' THEN 'Password reset link (hidden)'
+                                           WHEN reference LIKE 'welcome-%'  THEN 'Login details (hidden)'
+                                           ELSE LEFT(message, 160) END AS message
+                               FROM sms_logs ORDER BY id DESC LIMIT 50")]);
+    }
+
+    // ── POST /api/admin/sms-test {phone} — send a test SMS to check SMS works (admin only, 5 per hour) ──
+    if ($method === 'POST' && $sub === 'sms-test') {
+        if (!$isAdmin) err(403, 'Admin only.');
+        if (strlen(phoneKey((string)($b['phone'] ?? ''))) < 9) err(400, 'Enter a valid phone number.');
+        if (!defined('SMS_TOKEN') || SMS_TOKEN === '') err(503, 'SMS is not set up: SMS_TOKEN is empty in _config.php.');
+        if (recentSmsCount('test-', 60) >= 5) err(429, 'Test limit reached (5 per hour). Try again later.');
+        $sent = sendSMS((string)$b['phone'], 'GETO STUDENT: Test SMS - ujumbe umefika. SMS inafanya kazi.', 'test-'.time());
+        $row  = q1("SELECT status, recipient_phone FROM sms_logs WHERE reference LIKE 'test-%' ORDER BY id DESC LIMIT 1");
+        ok(['sent' => $sent, 'status' => $row['status'] ?? null, 'to' => $row['recipient_phone'] ?? null]);
+    }
+
+    // ── PUT /api/admin/properties/:id/availability — mark a house Full or Rooms available ──
+    if ($method === 'PUT' && $sub === 'properties' && is_numeric($sub2) && $sub3 === 'availability') {
+        if (!$isSeniorStaff) err(403, 'Admin or zone manager only.');
+        $val = $b['availability'] ?? '';
+        if (!in_array($val, ['available', 'full'], true)) err(400, "availability must be 'available' or 'full'.");
+        $pid = (int)$sub2;
+        if (!q1("SELECT p.id FROM properties p WHERE p.id=? AND $zoneClause", array_merge([$pid], $zoneParams)))
+            err(404, 'Property not found or not in your zone.');
+        qn('UPDATE properties SET availability=?, availability_updated_at=NOW() WHERE id=?', [$val, $pid]);
+        ok(['id'=>$pid, 'availability'=>$val]);
+    }
+
     // ── GET /api/admin/properties ─────────────────────────────
     if ($method === 'GET' && $sub === 'properties' && !$sub2) {
         $sql = "SELECT p.id,p.name,p.property_type,p.area,p.status,p.verified,p.views_count,p.created_at,
+                       p.availability,p.availability_updated_at,
                        p.rejection_note,z.code AS zone_code,z.name AS zone_name,c.name AS cluster_name,
                        u.name AS university_name,ow.name AS owner_name,ow.phone AS owner_phone,
                        COALESCE(
@@ -2059,6 +2411,7 @@ function routeAdmin(array $parts, string $method): void {
         $params = $zoneParams;
         if (!empty($_GET['status'])) { $sql .= ' AND p.status=?'; $params[] = $_GET['status']; }
         if (!empty($_GET['verified'])) { $sql .= ' AND p.verified=?'; $params[] = (int)$_GET['verified']; }
+        if (in_array($_GET['availability'] ?? '', ['available','full'], true)) { $sql .= ' AND p.availability=?'; $params[] = $_GET['availability']; }
         $sql .= ' GROUP BY p.id ORDER BY p.created_at DESC';
         ok(q($sql, $params));
     }
@@ -2105,13 +2458,21 @@ function routeAdmin(array $parts, string $method): void {
     }
 
     // ── POST /api/admin/properties — admin or geto manager creates a property ─
+    // Quick add: instead of owner_id, send owner_name + owner_phone (account found or created),
+    // and monthly_price (+ room_type, rooms_count) to add the first room type in the same call.
     if ($method === 'POST' && $sub === 'properties' && !$sub2) {
         $b = body();
         if (empty($b['name']) || empty($b['nearest_university_id'])) err(400, 'Name and university required.');
+        if (!empty($b['monthly_price']) && (int)$b['monthly_price'] <= 0) err(400, 'Price must be a number.');
         $uni = q1('SELECT zone_id,cluster_id FROM universities WHERE id=?', [(int)$b['nearest_university_id']]);
+        if (!$uni) err(404, 'University not found.');
         $zid = !empty($b['zone_id']) ? (int)$b['zone_id'] : ($uni['zone_id'] ?? null);
         $cid = !empty($b['cluster_id']) ? (int)$b['cluster_id'] : ($uni['cluster_id'] ?? null);
-        $ownerId = !empty($b['owner_id']) ? (int)$b['owner_id'] : (int)$u['id'];
+        db()->beginTransaction();   // owner + house + first room are saved together or not at all
+        $owner = (empty($b['owner_id']) && !empty($b['owner_phone']))
+            ? findOrCreateUser((string)($b['owner_name'] ?? ''), (string)$b['owner_phone'], 'property_owner')
+            : null;
+        $ownerId = !empty($b['owner_id']) ? (int)$b['owner_id'] : ($owner['id'] ?? (int)$u['id']);
         // All listings go live immediately — badge (verified=1) requires in-person inspection
         $status = 'approved';
         $nearUniId = (int)$b['nearest_university_id'];
@@ -2130,7 +2491,18 @@ function routeAdmin(array $parts, string $method): void {
         foreach ($uniIds as $uid2) {
             if ($uid2 > 0) qn('INSERT IGNORE INTO property_universities (property_id,university_id) VALUES (?,?)', [$pid, $uid2]);
         }
-        ok(['id'=>$pid, 'status'=>'approved', 'message'=>'Property is now live. Schedule a verification visit to earn the Geto badge.']);
+        $roomId = null;
+        if (!empty($b['monthly_price'])) {
+            $roomId = qx('INSERT INTO rooms (property_id,room_type,monthly_price,deposit_months,capacity,total_count,occupied_count,furnished,bathroom_type,description) VALUES (?,?,?,?,?,?,0,?,?,NULL)',
+                [$pid, $b['room_type'] ?? 'Single', (int)$b['monthly_price'], max(1, (int)($b['deposit_months'] ?? 1)),
+                 max(1, (int)($b['capacity'] ?? 1)), max(1, (int)($b['rooms_count'] ?? 1)),
+                 (int)($b['furnished'] ?? 0), $b['bathroom_type'] ?? 'Shared']);
+        }
+        if (($b['availability'] ?? '') === 'full') qn("UPDATE properties SET availability='full', availability_updated_at=NOW() WHERE id=?", [$pid]);
+        db()->commit();
+        sendWelcomeSms($owner);
+        ok(['id'=>$pid, 'status'=>'approved', 'room_id'=>$roomId, 'owner'=>$owner,
+            'message'=>'Property is now live. Schedule a verification visit to earn the Geto badge.']);
     }
 
     // ── POST /api/admin/properties/:id/rooms — add room type ──
@@ -2434,7 +2806,7 @@ function routeAdmin(array $parts, string $method): void {
     if ($method === 'POST' && $sub === 'users' && $sub2 === 'owner') {
         foreach (['name','phone','password'] as $f)
             if (empty($b[$f])) err(400, "$f required.");
-        if (q1('SELECT id FROM users WHERE phone=?', [$b['phone']])) err(409, 'Phone number tayari imesajiliwa.');
+        if (q1('SELECT id FROM users WHERE phone=?', [$b['phone']]) || usersByPhone($b['phone'])) err(409, 'Phone number tayari imesajiliwa.');
         $email = !empty($b['email']) ? trim($b['email']) : null;
         if ($email && q1('SELECT id FROM users WHERE email=?', [$email])) err(409, 'Email tayari imesajiliwa.');
         $role = in_array($b['role']??'', ['property_owner','property_manager']) ? $b['role'] : 'property_owner';
@@ -2627,13 +2999,19 @@ function routeAdmin(array $parts, string $method): void {
     }
 
     // ── POST /api/admin/bookings — staff creates booking for a student ──
+    // Quick register: send student_name + student_phone instead of student_id (account found or
+    // created). room_id may be left out when the house has one room type; move-in defaults to today.
     if ($method === 'POST' && $sub === 'bookings' && !$sub2) {
         $staff = requireStaff();
         $b2 = body();
-        foreach (['student_id','property_id','room_id','move_in_date'] as $f)
-            if (empty($b2[$f])) err(400, "$f required.");
-        $student = q1("SELECT id FROM users WHERE id=? AND role='student'", [(int)$b2['student_id']]);
-        if (!$student) err(404, 'Student not found.');
+        if (empty($b2['property_id'])) err(400, 'Choose a house.');
+        if (empty($b2['student_id']) && empty($b2['student_phone'])) err(400, "Enter the student's name and phone number.");
+        if (empty($b2['room_id'])) {
+            $types = q('SELECT id FROM rooms WHERE property_id=? LIMIT 2', [(int)$b2['property_id']]);
+            if (count($types) !== 1) err(400, $types ? 'Choose a room type for this house.' : 'This house has no rooms yet. Add a room type first.');
+            $b2['room_id'] = $types[0]['id'];
+        }
+        if (empty($b2['move_in_date'])) $b2['move_in_date'] = date('Y-m-d');
         $prop = q1("SELECT id,owner_id FROM properties WHERE id=? AND status='approved'", [(int)$b2['property_id']]);
         if (!$prop) err(404, 'Property not found.');
         $room = q1('SELECT id, total_count, capacity, property_id FROM rooms WHERE id=? AND property_id=?',
@@ -2657,6 +3035,15 @@ function routeAdmin(array $parts, string $method): void {
             $totalSlots2 = (int)$room['total_count'] * max(1, (int)$room['capacity']);
             if ($confirmedBks2 >= $totalSlots2) err(409, 'No spaces available in this room.');
         }
+        db()->beginTransaction();   // new student account + booking are saved together or not at all
+        $newStudent = null;
+        if (empty($b2['student_id'])) {
+            $newStudent = findOrCreateUser((string)($b2['student_name'] ?? ''), (string)$b2['student_phone'], 'student',
+                ['university_id' => !empty($b2['university_id']) ? (int)$b2['university_id'] : null]);
+            $b2['student_id'] = $newStudent['id'];
+        }
+        $student = q1("SELECT id FROM users WHERE id=? AND role='student'", [(int)$b2['student_id']]);
+        if (!$student) err(404, 'Student not found.');
         $dup = q1("SELECT id FROM bookings WHERE student_id=? AND property_id=? AND status NOT IN ('rejected','cancelled','checked_out','move_out_completed')", [(int)$b2['student_id'],(int)$b2['property_id']]);
         if ($dup) err(409, 'This student already has an active booking at this property.');
         $isOfficer = in_array($staff['role'], ['geto_manager','geto_officer']);
@@ -2666,7 +3053,9 @@ function routeAdmin(array $parts, string $method): void {
                   [(int)$b2['student_id'],(int)$b2['property_id'],(int)$b2['room_id'],(int)$prop['owner_id'],
                    $b2['move_in_date'],$b2['notes']??null,$initStatus,(int)$staff['id'],$staff['role'],
                    $isOfficer?(int)$staff['id']:null]);
-        created(['id'=>$bid,'status'=>$initStatus,
+        db()->commit();
+        sendWelcomeSms($newStudent);
+        created(['id'=>$bid,'status'=>$initStatus,'student'=>$newStudent,
                  'message'=>'Booking created. Student will need to confirm after payment is recorded.']);
     }
 
@@ -3220,7 +3609,7 @@ function routeSms(array $parts, string $method): void {
                       JOIN users u       ON u.id=b.student_id
                       JOIN properties p  ON p.id=b.property_id
                       JOIN rooms r       ON r.id=b.room_id
-                      WHERE b.status='confirmed'
+                      WHERE b.status IN ('confirmed','payment_confirmed','student_confirmed','active','checked_in','move_in_completed')
                       ORDER BY u.id");
         $sent = 0;
         foreach ($tenants as $t) {
@@ -3232,7 +3621,10 @@ function routeSms(array $parts, string $method): void {
     }
 
     // POST /api/sms/daily-summary — send activity summary (max 3/day, only if activity)
+    // Run by a cPanel cron job: POST https://getostudent.co.tz/api/sms/daily-summary?token=<CRON_TOKEN>
     if ($method === 'POST' && $sub === 'daily-summary') {
+        $cronToken = defined('CRON_TOKEN') ? CRON_TOKEN : SMS_CALLBACK_TOKEN;
+        if ((string)$cronToken === '' || !hash_equals((string)$cronToken, (string)($_GET['token'] ?? ''))) err(403, 'Forbidden.');
         // Check daily cap (max 3 summary SMS per day across both numbers)
         $sentToday = q1("SELECT COUNT(*) AS cnt FROM sms_logs WHERE DATE(sent_at)=CURDATE() AND reference LIKE 'daily-summary-%'");
         if ((int)($sentToday['cnt'] ?? 0) >= 6) ok(['skipped'=>true,'reason'=>'Daily limit reached (3 summaries × 2 numbers).']);
@@ -3324,13 +3716,19 @@ if ($method === 'GET' && ($parts[0] ?? '') === 'admin' && in_array($parts[1] ?? 
 }
 
 // ── POST /api/track — public page-view tracker (no auth) ────────
+// Body: { page, landing?, ref?, utm? }. The front end sets landing=true on the first
+// page of a visit and sends document.referrer as ref and ?utm_source= as utm.
 if ($method === 'POST' && ($parts[0] ?? '') === 'track') {
     migrate(); // ensures page_views table exists
     $b    = body();
-    $page = substr(trim($b['page'] ?? '/'), 0, 255);
+    $page = substr(trim((string)($b['page'] ?? '/')), 0, 255);
     $ip   = $_SERVER['HTTP_CF_CONNECTING_IP'] ?? $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
     $hash = hash('sha256', $ip . date('Y-m-d'));
-    qn("INSERT INTO page_views (page, ip_hash) VALUES (?, ?)", [$page, $hash]);
+    [$source, $refHost] = !empty($b['landing'])
+        ? trafficSource((string)($b['ref'] ?? ''), (string)($b['utm'] ?? ''))
+        : [null, null];
+    qn("INSERT INTO page_views (page, ip_hash, source, referrer_host) VALUES (?, ?, ?, ?)",
+       [$page, $hash, $source, $refHost]);
     ok(['tracked' => true]);
 }
 
@@ -3338,6 +3736,7 @@ migrate();
 
 switch ($parts[0] ?? '') {
     case 'health':       routeHealth(); break;
+    case 'site-stats':   routeSiteStats(); break;
     case 'auth':         routeAuth($parts, $method); break;
     case 'zones':        routeZones($parts, $method); break;
     case 'clusters':     routeClusters($parts, $method); break;

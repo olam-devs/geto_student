@@ -5,8 +5,9 @@ export default function PropertyCard({ property, onClick }) {
   const {
     name, university_name, university_short, area,
     price_from, verified, main_photo, property_type, highlight,
-    avg_rating, review_count,
+    avg_rating, review_count, availability,
   } = property;
+  const full = availability === 'full';
 
   const fmt = (n) => n ? Number(n).toLocaleString('en-TZ') : '—';
 
@@ -40,6 +41,11 @@ export default function PropertyCard({ property, onClick }) {
         <div className="absolute top-3 right-3">
           <span className="bg-black/60 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{property_type}</span>
         </div>
+        {full && (
+          <div className="absolute bottom-3 left-3">
+            <span className="bg-coral-700 text-white text-[11px] font-bold px-2.5 py-1 rounded-full">Full right now</span>
+          </div>
+        )}
       </div>
 
       {/* Body */}
@@ -65,7 +71,9 @@ export default function PropertyCard({ property, onClick }) {
                 <Star size={11} fill="currentColor"/> {avg_rating} <span className="text-slate-400 font-normal">({review_count})</span>
               </span>
             )}
-            <span className="text-xs font-semibold bg-primary text-white px-3 py-1.5 rounded-lg group-hover:bg-primary/90 transition-colors">Book Now</span>
+            {full
+              ? <span className="text-xs font-semibold border border-slate-200 text-slate-600 px-3 py-1.5 rounded-lg">View</span>
+              : <span className="text-xs font-semibold bg-primary text-white px-3 py-1.5 rounded-lg group-hover:bg-primary/90 transition-colors">Book Now</span>}
           </div>
         </div>
       </div>

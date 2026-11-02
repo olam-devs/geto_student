@@ -42,9 +42,10 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    // Local API address; set API_TARGET to use another one (e.g. the PHP test API on :8099)
     proxy: {
-      '/api':      { target: 'http://localhost:5000', changeOrigin: true },
-      '/uploads':  { target: 'http://localhost:5000', changeOrigin: true },
+      '/api':      { target: process.env.API_TARGET || 'http://localhost:5000', changeOrigin: true },
+      '/uploads':  { target: process.env.API_TARGET || 'http://localhost:5000', changeOrigin: true },
     },
   },
   build: { outDir: '../dist', emptyOutDir: true },

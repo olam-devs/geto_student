@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CheckCircle2, Shield, Clock, Star, ArrowRight, MapPin, ChevronRight,
@@ -8,46 +8,29 @@ import api from '../api';
 import PropertyCard from '../components/PropertyCard';
 import PropertyModal from '../components/PropertyModal';
 
-// ── Hero showcase: cycles through property types ──────────────
-const HERO_SLIDES = [
-  {
-    photo: 'https://images.unsplash.com/photo-1555854877-bab0e564b8d5?w=800&h=600&fit=crop&fm=webp&q=80',
-    type: 'Student Hostel', name: 'Ubungo Student Lodge', area: 'Ubungo · Near UDSM',
-    price: '150,000', room: 'Single Room', bath: 'Shared',
-  },
-  {
-    photo: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800&h=600&fit=crop&fm=webp&q=80',
-    type: 'Apartment', name: 'Ardhi View Apartments', area: 'Kinondoni · Near ARU',
-    price: '300,000', room: 'Studio', bath: 'Private',
-  },
-  {
-    photo: 'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800&h=600&fit=crop&fm=webp&q=80',
-    type: 'Student House', name: 'MUHAS Comfort House', area: 'Ilala · Near MUHAS',
-    price: '180,000', room: 'Single Room', bath: 'Shared',
-  },
-  {
-    photo: 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=800&h=600&fit=crop&fm=webp&q=80',
-    type: 'Bedsitter', name: 'DIT Baraka Self-Contained', area: 'Ilala · Near DIT',
-    price: '220,000', room: 'Bedsitter', bath: 'Private',
-  },
-];
-
-function HeroShowcase({ propCount }) {
+// ── Hero showcase: real houses that have rooms right now (verified first) ──
+function HeroShowcase({ slides, housesAvailable, onOpen }) {
   const [cur, setCur] = useState(0);
+  const [paused, setPaused] = useState(false);
   useEffect(() => {
-    const t = setInterval(() => setCur(i => (i + 1) % HERO_SLIDES.length), 4000);
+    if (slides.length < 2 || paused) return;
+    const t = setInterval(() => setCur(i => (i + 1) % slides.length), 4000);
     return () => clearInterval(t);
-  }, []);
-  const slide = HERO_SLIDES[cur];
+  }, [slides.length, paused]);
+  if (!slides.length) return null;
+  const slide = slides[cur % slides.length];
+  const near = slide.university_short || slide.university_name;
   return (
-    <div className="relative w-full max-w-sm mx-auto lg:max-w-none">
-      {/* Main card */}
-      <div className="rounded-3xl overflow-hidden shadow-2xl border border-white/60 bg-white"
+    <div className="relative w-full max-w-sm mx-auto lg:max-w-none"
+      onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+      {/* Main card: opens the house */}
+      <button type="button" onClick={() => onOpen(slide)} aria-label={`Open ${slide.name}`}
+        className="block w-full text-left rounded-3xl overflow-hidden shadow-2xl border border-white/60 bg-white focus:outline-none focus-visible:ring-4 focus-visible:ring-accent-400"
         style={{ transform: 'rotate(1.5deg)' }}>
         {/* Photo area */}
-        <div className="relative overflow-hidden" style={{ aspectRatio: '4/3' }}>
-          {HERO_SLIDES.map((s, i) => (
-            <img key={s.photo} src={s.photo} alt={s.name}
+        <div className="relative overflow-hidden bg-slate-100" style={{ aspectRatio: '4/3' }}>
+          {slides.map((s, i) => (
+            <img key={s.id} src={s.main_photo} alt={i === cur ? s.name : ''} loading={i === 0 ? 'eager' : 'lazy'}
               className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
               style={{ opacity: cur === i ? 1 : 0 }}
             />
@@ -55,46 +38,55 @@ function HeroShowcase({ propCount }) {
           {/* Gradient */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"/>
           {/* Badges */}
-          <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-sm text-primary text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-sm">
-            {slide.type}
-          </div>
-          <div className="absolute top-3 right-3 bg-verified/90 backdrop-blur-sm text-white text-[10px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1">
-            <CheckCircle2 size={10}/> GETO VERIFIED
-          </div>
-          {/* Slide dots */}
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1">
-            {HERO_SLIDES.map((_, i) => (
-              <button key={i} onClick={() => setCur(i)}
-                className={`w-1.5 h-1.5 rounded-full transition-all ${i === cur ? 'bg-white w-4' : 'bg-white/50'}`}/>
-            ))}
-          </div>
+          {slide.property_type && (
+            <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-sm text-primary text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-sm">
+              {slide.property_type}
+            </div>
+          )}
+          {!!Number(slide.verified) && (
+            <div className="absolute top-3 right-3 bg-verified/90 backdrop-blur-sm text-white text-[10px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1">
+              <CheckCircle2 size={10}/> GETO VERIFIED
+            </div>
+          )}
         </div>
         {/* Property details */}
         <div className="p-4 bg-white">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <h3 className="font-display font-bold text-slate-900 text-base leading-tight truncate">{slide.name}</h3>
-              <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                <MapPin size={10}/>{slide.area}
+              <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5 truncate">
+                <MapPin size={10} className="shrink-0"/>{slide.area}{near ? ` · Near ${near}` : ''}
               </p>
             </div>
-            <div className="text-right shrink-0">
-              <p className="text-[10px] text-slate-400">From</p>
-              <p className="font-bold text-accent-600 text-base leading-tight">TZS {slide.price}<span className="text-[10px] text-slate-400 font-normal">/mo</span></p>
-            </div>
+            {Number(slide.price_from) > 0 && (
+              <div className="text-right shrink-0">
+                <p className="text-[10px] text-slate-400">From</p>
+                <p className="font-bold text-accent-700 text-base leading-tight">TZS {Number(slide.price_from).toLocaleString()}<span className="text-[10px] text-slate-400 font-normal">/mo</span></p>
+              </div>
+            )}
           </div>
-          <div className="flex gap-3 mt-3 text-xs text-slate-500">
-            <span className="flex items-center gap-1"><span>🛏</span>{slide.room}</span>
-            <span className="flex items-center gap-1"><span>🚿</span>{slide.bath}</span>
-          </div>
+          <p className="mt-3 text-xs font-semibold text-accent-700 flex items-center gap-1"><CheckCircle2 size={12}/>Rooms available</p>
         </div>
-      </div>
+      </button>
+      {/* Slide dots (large tap area, small visible dot) */}
+      {slides.length > 1 && (
+        <div className="flex justify-end gap-0.5 mt-3 pr-1" role="tablist" aria-label="Featured houses">
+          {slides.map((s, i) => (
+            <button key={s.id} type="button" role="tab" aria-selected={i === cur} aria-label={s.name} onClick={() => setCur(i)}
+              className="w-7 h-7 flex items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+              <span className={`block h-1.5 rounded-full transition-all ${i === cur ? 'bg-primary-700 w-4' : 'bg-slate-300 w-1.5'}`}/>
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* Floating verified count pill */}
-      <div className="absolute -bottom-4 -left-4 bg-primary-900 text-white rounded-2xl px-4 py-3 shadow-xl z-10">
-        <p className="text-[10px] text-white/50 font-semibold uppercase tracking-wider">Verified Properties</p>
-        <p className="font-bold text-sm text-accent-400">{propCount || 5}+ available now</p>
-      </div>
+      {/* Floating count pill: real number of houses with rooms */}
+      {housesAvailable > 0 && (
+        <div className="absolute -bottom-4 -left-4 bg-primary-900 text-white rounded-2xl px-4 py-3 shadow-xl z-10 pointer-events-none">
+          <p className="text-[10px] text-white/60 font-semibold uppercase tracking-wider">Rooms available</p>
+          <p className="font-bold text-sm text-accent-400">{housesAvailable} {housesAvailable === 1 ? 'house' : 'houses'} right now</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -119,14 +111,16 @@ export default function Home() {
   const [universities, setUnis]   = useState([]);
   const [featured, setFeatured]   = useState([]);
   const [selectedProp, setSelectedProp] = useState(null);
-  const [propCount, setPropCount] = useState(0);
+  const [slides, setSlides]       = useState([]);
+  const [stats, setStats]         = useState(null);
 
   useEffect(() => {
-    api.get('/universities').then(r => setUnis(r.data)).catch(() => {});
-    api.get('/properties?verified_only=true').then(r => {
-      setFeatured(r.data.slice(0, 6));
-      setPropCount(r.data.length);
-    }).catch(() => {});
+    const list = (r) => (Array.isArray(r.data) ? r.data : []);   // never crash if the API is down
+    api.get('/universities').then(r => setUnis(list(r))).catch(() => {});
+    api.get('/properties?verified_only=true').then(r => setFeatured(list(r).slice(0, 6))).catch(() => {});
+    api.get('/properties', { params: { available_only: 'true', limit: 40 } })
+      .then(r => setSlides(list(r).filter(p => p.main_photo).slice(0, 6))).catch(() => {});
+    api.get('/site-stats').then(r => setStats(r.data)).catch(() => {});
   }, []);
 
   return (
@@ -147,7 +141,7 @@ export default function Home() {
             <div className="order-2 lg:order-1">
               <div className="inline-flex items-center gap-2 bg-primary-50 border border-primary-100 text-primary-700 text-xs font-semibold px-3.5 py-1.5 rounded-full mb-6">
                 <MapPin size={11} strokeWidth={2.5}/>
-                Dar es Salaam · Mbeya · {universities.length || 30}+ Universities
+                Dar es Salaam · Mbeya{universities.length ? ` · ${universities.length} universities` : ''}
               </div>
 
               <h1 className="font-display font-bold leading-[1.05] tracking-tight text-slate-900 mb-5"
@@ -162,17 +156,24 @@ export default function Home() {
               </p>
 
               {/* Stats */}
-              <div className="flex flex-wrap items-center gap-6 sm:gap-10 mb-8">
-                <div>
-                  <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">200+</p>
-                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Rooms</p>
+              {stats && (
+                <div className="flex flex-wrap items-center gap-6 sm:gap-10 mb-8">
+                  <div>
+                    <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{stats.houses_available}</p>
+                    <p className="text-slate-500 text-xs font-semibold mt-1 uppercase tracking-wide">Houses with rooms</p>
+                  </div>
+                  <div className="w-px h-12 bg-slate-200"/>
+                  <div>
+                    <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{stats.houses_verified}</p>
+                    <p className="text-slate-500 text-xs font-semibold mt-1 uppercase tracking-wide">Geto verified</p>
+                  </div>
+                  <div className="w-px h-12 bg-slate-200"/>
+                  <div>
+                    <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{stats.universities_with_houses}</p>
+                    <p className="text-slate-500 text-xs font-semibold mt-1 uppercase tracking-wide">Universities served</p>
+                  </div>
                 </div>
-                <div className="w-px h-12 bg-slate-200"/>
-                <div>
-                  <p className="font-display font-extrabold text-4xl text-primary-700 leading-none">{universities.length || 30}+</p>
-                  <p className="text-slate-400 text-xs font-semibold mt-1 uppercase tracking-wide">Universities</p>
-                </div>
-              </div>
+              )}
 
               {/* CTA */}
               <div className="flex flex-wrap gap-3">
@@ -199,7 +200,7 @@ export default function Home() {
 
             {/* ── Right: single property showcase card ── */}
             <div className="order-1 lg:order-2 pb-6">
-              <HeroShowcase propCount={propCount} />
+              <HeroShowcase slides={slides} housesAvailable={stats?.houses_available || 0} onOpen={(p) => setSelectedProp(p.id)} />
             </div>
           </div>
         </div>

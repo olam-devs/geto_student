@@ -54,10 +54,19 @@ function StaffLayout({ children }) {
   return <div className="min-h-screen bg-gray-50">{children}</div>;
 }
 
+// Counts page views. The first page of a visit also sends where the visitor came from
+// (the referring site, or ?utm_source= on the link) for the admin analytics.
+let landingSent = false;
 function PageTracker() {
   const location = useLocation();
   useEffect(() => {
-    api.post('/track', { page: location.pathname }).catch(() => {});
+    const body = { page: location.pathname };
+    if (!landingSent) {
+      landingSent = true;
+      const qs = new URLSearchParams(location.search);
+      Object.assign(body, { landing: true, ref: document.referrer || '', utm: qs.get('utm_source') || '' });
+    }
+    api.post('/track', body).catch(() => {});
   }, [location.pathname]);
   return null;
 }

@@ -101,7 +101,9 @@ export default function Auth({ staffMode = false }) {
   const [sp] = useSearchParams();
   const { login, staffLogin, register } = useAuth();
 
-  const [tab, setTab]       = useState(staffMode ? 'staff-login' : (sp.get('tab') || 'login'));
+  // Referral links (/auth?ref=CODE) open sign-up with the code filled in
+  const refCode = (sp.get('ref') || '').trim().toUpperCase().slice(0, 20);
+  const [tab, setTab]       = useState(staffMode ? 'staff-login' : (sp.get('tab') || (refCode ? 'register' : 'login')));
   const [resetToken] = useState(sp.get('token') || '');
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState('');
@@ -119,7 +121,7 @@ export default function Auth({ staffMode = false }) {
 
   const [f, setF] = useState({
     name:'', phone_or_email:'', email:'', phone:'', password:'',
-    university_id:'', referral_code:'', business_name:'', role:'student', username:'',
+    university_id:'', referral_code: refCode, business_name:'', role:'student', username:'',
   });
 
   useEffect(() => { api.get('/universities').then(r => setUnis(r.data)).catch(() => {}); }, []);

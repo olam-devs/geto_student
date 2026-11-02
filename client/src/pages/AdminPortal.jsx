@@ -10,11 +10,16 @@ import {
   ClipboardList, BadgeCheck, Phone, Mail, AtSign,
   ChevronLeft, Receipt, BookPlus, UserSearch, Home,
   Camera, Upload, ImagePlus, SkipForward,
-  Smartphone, SendHorizonal, Clock, CheckCircle2
+  Smartphone, SendHorizonal, Clock, CheckCircle2, BarChart3, MessageSquareText
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
 import { TZ_LOCATIONS } from '../data/tz_locations';
+import AvailabilitySwitch from '../components/admin/AvailabilitySwitch';
+import QuickAddHouse from '../components/admin/QuickAddHouse';
+import RegisterStudent from '../components/admin/RegisterStudent';
+import AdminAnalytics from './AdminAnalytics';
+import AdminSms from './AdminSms';
 
 // ─── Simple typeahead for location values ──────────────────────
 function LocTypeahead({ value, onChange, options, placeholder, disabled }) {
@@ -58,6 +63,8 @@ const ADMIN_NAV = [
   { path: '/admin/bookings', icon: CheckSquare,     label: 'Bookings' },
 ];
 const ADMIN_ONLY_NAV = [
+  { path: '/admin/analytics',    icon: BarChart3,     label: 'Analytics' },
+  { path: '/admin/sms',          icon: MessageSquareText, label: 'SMS' },
   { path: '/admin/zones',        icon: Map,           label: 'Zones & Areas' },
   { path: '/admin/universities', icon: GraduationCap, label: 'Universities' },
   { path: '/admin/staff',        icon: Shield,        label: 'Zone Managers' },
@@ -202,6 +209,26 @@ const BOOKING_STATUS_COLOR = {
   student_confirmed: 'bg-sky-100 text-sky-700',
 };
 
+// Big buttons for the two most common jobs (easy to hit on a phone)
+function QuickActions() {
+  const [open, setOpen] = useState('');
+  const cls = 'min-h-[64px] rounded-2xl px-4 flex items-center gap-3 font-semibold text-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary';
+  return (
+    <>
+      <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-3">
+        <button onClick={() => setOpen('house')} className={`${cls} bg-primary text-white hover:bg-primary-600`}>
+          <Building2 size={22} aria-hidden="true" className="shrink-0" />Add a house
+        </button>
+        <button onClick={() => setOpen('student')} className={`${cls} bg-accent-700 text-white hover:bg-accent-600`}>
+          <BookPlus size={22} aria-hidden="true" className="shrink-0" />Register a student
+        </button>
+      </div>
+      {open === 'house' && <QuickAddHouse onClose={() => setOpen('')} />}
+      {open === 'student' && <RegisterStudent onClose={() => setOpen('')} />}
+    </>
+  );
+}
+
 function Dashboard() {
   const { isAdmin, isZoneManager, isGetoManager, user } = useAuth();
   const [data, setData] = useState(null);
@@ -216,7 +243,8 @@ function Dashboard() {
     const s = data?.officer_summary || {};
     const bookings = data?.officer_bookings || [];
     return (
-      <div className="p-5 lg:p-8 space-y-8">
+      <div className="p-4 sm:p-5 lg:p-8 space-y-8">
+        <QuickActions />
         <section>
           <h3 className="font-display font-bold text-lg text-slate-900 mb-4">My Bookings</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -270,7 +298,8 @@ function Dashboard() {
   }
   const g = data?.global;
   return (
-    <div className="p-5 lg:p-8 space-y-8">
+    <div className="p-4 sm:p-5 lg:p-8 space-y-8">
+        <QuickActions />
       {/* Pending-from-managers alert */}
       {isAdmin && (data?.pending_from_managers || 0) > 0 && (
         <div className="bg-amber-50 border border-amber-300 rounded-2xl px-5 py-4 flex items-center justify-between gap-4">
@@ -453,10 +482,12 @@ function Dashboard() {
 
 // Properties
 function PropertiesList() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSeniorStaff } = useAuth();
   const [all, setAll]           = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [verifiedFilter, setVerifiedFilter] = useState(''); // '' | '1' | '0'
+  const [availFilter, setAvailFilter] = useState('');      // '' | 'available' | 'full'
+  const [quickOpen, setQuickOpen] = useState(false);
   const [q, setQ]               = useState('');
   const [uniFilter, setUniFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -489,8 +520,10 @@ function PropertiesList() {
     }
     if (uniFilter && String(p.university_id) !== uniFilter) return false;
     if (typeFilter && (p.property_type||'').toLowerCase() !== typeFilter.toLowerCase()) return false;
+    if (availFilter && (p.availability || 'available') !== availFilter) return false;
     return true;
   });
+  const setAvail = (id, v) => setAll(list => list.map(p => p.id === id ? { ...p, availability: v } : p));
 
   const approve = async (id) => { await api.put(`/admin/properties/${id}/approve`); load(); };
   const reject = async (id) => {
@@ -517,16 +550,16 @@ function PropertiesList() {
     load();
   };
 
-  const activeFilters = [q, uniFilter, typeFilter, verifiedFilter].filter(Boolean).length;
+  const activeFilters = [q, uniFilter, typeFilter, verifiedFilter, availFilter].filter(Boolean).length;
 
   return (
-    <div className="p-5 lg:p-8">
+    <div className="p-4 sm:p-5 lg:p-8">
       {/* Top bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="font-display font-bold text-lg text-slate-900">Properties
           <span className="ml-2 text-sm font-normal text-slate-400">{filtered.length} of {all.length}</span>
         </h2>
-        <button onClick={() => setAddOpen(true)} className="btn-primary text-sm shrink-0"><Plus size={15}/>Add Property</button>
+        <button onClick={() => setQuickOpen(true)} className="btn-primary text-sm shrink-0 min-h-[44px]"><Plus size={15}/>Add a house</button>
       </div>
 
       {/* Filter bar */}
@@ -565,8 +598,16 @@ function PropertiesList() {
               {lbl}
             </button>
           ))}
+          <span className="w-px h-4 bg-slate-200 mx-1"/>
+          <span className="text-xs text-slate-400 font-semibold uppercase tracking-wide mr-1">Rooms:</span>
+          {[['','All'],['available','Available'],['full','Full']].map(([v,lbl]) => (
+            <button key={v} onClick={() => setAvailFilter(v)}
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${availFilter===v?'bg-primary text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              {lbl}
+            </button>
+          ))}
           {activeFilters > 0 && (
-            <button onClick={() => { setQ(''); setUniFilter(''); setTypeFilter(''); setVerifiedFilter(''); }}
+            <button onClick={() => { setQ(''); setUniFilter(''); setTypeFilter(''); setVerifiedFilter(''); setAvailFilter(''); }}
               className="ml-auto text-xs text-red-500 hover:text-red-700 font-semibold flex items-center gap-1">
               <X size={12}/> Clear filters
             </button>
@@ -576,10 +617,12 @@ function PropertiesList() {
 
       {!isAdmin && (
         <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-700 font-medium">
-          Properties you add will require Admin approval before being published.
+          Houses you add go live straight away. Admin can verify them after an inspection.
         </div>
       )}
       {addOpen && <AddPropertyModal onClose={() => setAddOpen(false)} onSaved={load} />}
+      {quickOpen && <QuickAddHouse onClose={() => setQuickOpen(false)} onSaved={load}
+        onUseFullForm={() => { setQuickOpen(false); setAddOpen(true); }} />}
       {loading ? <Spinner /> : (
         <div className="space-y-3">
           {filtered.length === 0 && <EmptyState label={all.length ? 'No properties match your filters' : 'No properties'} />}
@@ -603,6 +646,10 @@ function PropertiesList() {
                   <span>{p.total_rooms||0} total rooms</span>
                   <span className={p.occupied > 0 ? 'text-green-600 font-medium' : ''}>{p.occupied||0} occupied</span>
                 </div>
+                <div className="mt-2.5">
+                  <AvailabilitySwitch propertyId={p.id} value={p.availability} canEdit={isSeniorStaff}
+                    onChange={v => setAvail(p.id, v)} />
+                </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap shrink-0">
                 {p.status === 'pending' && <>
@@ -612,7 +659,7 @@ function PropertiesList() {
                 {p.status === 'approved' && !p.verified && (
                   <button onClick={() => verify(p.id)} className="btn-sm bg-primary text-white hover:bg-primary/80"><Shield size={13}/>Verify</button>
                 )}
-                {p.verified && (
+                {!!Number(p.verified) && (
                   <button onClick={() => unverify(p.id)} className="btn-sm bg-amber-500 text-white hover:bg-amber-600"><Shield size={13}/>Unverify</button>
                 )}
                 <button onClick={() => deleteProp(p.id)} className="btn-sm border border-red-200 text-red-500 hover:bg-red-50"><Trash2 size={13}/></button>
@@ -1248,6 +1295,7 @@ function RoomRow({ r, fmt, onEdit, onDel, onReload }) {
 
 // Property Detail (staff)
 function PropertyDetail() {
+  const { isSeniorStaff } = useAuth();
   const { id } = useLocation().state || {};
   const navigate = useNavigate();
   const loc = useLocation();
@@ -1314,10 +1362,10 @@ function PropertyDetail() {
   if (!prop) return <EmptyState label="Property not found." />;
 
   return (
-    <div className="p-5 lg:p-8 space-y-6">
+    <div className="p-4 sm:p-5 lg:p-8 space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div className="min-w-0">
           <button onClick={() => navigate('/admin/properties')} className="flex items-center gap-1 text-xs text-slate-500 hover:text-primary mb-2">
             <ArrowLeft size={13}/> Back to list
           </button>
@@ -1328,8 +1376,12 @@ function PropertyDetail() {
               {[prop.ward, prop.district, prop.region].filter(Boolean).join(', ')}
             </p>
           )}
+          <div className="mt-3">
+            <AvailabilitySwitch propertyId={prop.id} value={prop.availability} canEdit={isSeniorStaff}
+              onChange={v => setProp(p => ({ ...p, availability: v }))} />
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2 shrink-0">
+        <div className="flex flex-wrap gap-2 sm:shrink-0">
           <StatusBadge status={prop.status} />
           <button onClick={() => navigate(`/admin/properties/${propId}/occupancy`)}
             className="btn-sm border border-primary text-primary hover:bg-primary hover:text-white bg-white">
@@ -1673,213 +1725,6 @@ function BookingStatusBadge({ status }) {
   };
   const c = cfg[status] || { cls: 'bg-slate-100 text-slate-600', label: status };
   return <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full ${c.cls}`}>{c.label}</span>;
-}
-
-// ─── Book for Student modal ─────────────────────────────────────
-function BookForStudentModal({ onClose, onCreated }) {
-  const [step, setStep]           = useState(1); // 1=find student, 2=pick property/room, 3=confirm
-  const [studentQ, setStudentQ]   = useState('');
-  const [students, setStudents]   = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [student, setStudent]     = useState(null);
-
-  const [properties, setProperties] = useState([]);
-  const [propId, setPropId]         = useState('');
-  const [propRooms, setPropRooms]   = useState([]);
-  const [roomId, setRoomId]         = useState('');
-  const [moveIn, setMoveIn]         = useState('');
-
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState('');
-  const [unis, setUnis]         = useState([]);
-  const [uniFilter, setUniFilter] = useState('');
-
-  useEffect(() => {
-    api.get('/universities').then(r => setUnis(r.data)).catch(()=>{});
-    api.get('/admin/properties').then(r => setProperties(r.data)).catch(()=>{});
-  }, []);
-
-  // Debounced student search
-  const searchTimer = React.useRef(null);
-  const doSearch = (q) => {
-    setStudentQ(q); setError('');
-    clearTimeout(searchTimer.current);
-    if (q.trim().length < 2) { setStudents([]); return; }
-    setSearching(true);
-    searchTimer.current = setTimeout(async () => {
-      try {
-        const r = await api.get('/admin/users/students', { params: { q, university_id: uniFilter || undefined } });
-        setStudents(r.data);
-      } catch { setStudents([]); }
-      finally { setSearching(false); }
-    }, 400);
-  };
-
-  // Load rooms when property changes
-  useEffect(() => {
-    setRoomId(''); setPropRooms([]);
-    if (!propId) return;
-    api.get(`/admin/properties/${propId}`).then(r => setPropRooms(r.data.rooms || [])).catch(()=>{});
-  }, [propId]);
-
-  const submit = async () => {
-    if (!student || !propId || !roomId || !moveIn) { setError('All fields are required.'); return; }
-    setLoading(true); setError('');
-    try {
-      await api.post('/admin/bookings', { student_id: student.id, property_id: parseInt(propId), room_id: parseInt(roomId), move_in_date: moveIn });
-      onCreated();
-      onClose();
-    } catch (e) {
-      setError(e.response?.data?.message || 'Failed to create booking.');
-      setLoading(false);
-    }
-  };
-
-  const selectedProperty = properties.find(p => String(p.id) === String(propId));
-  const selectedRoom = propRooms.find(r => String(r.id) === String(roomId));
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
-        <div className="bg-primary px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-white">
-            <BookPlus size={18}/>
-            <h3 className="font-display font-bold">Book for Student</h3>
-          </div>
-          <button onClick={onClose} className="text-white/60 hover:text-white"><X size={18}/></button>
-        </div>
-
-        {/* Step indicators */}
-        <div className="flex border-b border-slate-100">
-          {[['1','Find Student'],['2','Pick Room'],['3','Confirm']].map(([n,label]) => (
-            <div key={n} className={`flex-1 py-2.5 text-center text-xs font-semibold transition-colors
-              ${step >= parseInt(n) ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>
-              <span className={`inline-flex w-4 h-4 rounded-full items-center justify-center text-[10px] mr-1
-                ${step > parseInt(n) ? 'bg-primary text-white' : step === parseInt(n) ? 'bg-primary/10 text-primary' : 'bg-slate-100 text-slate-400'}`}>{n}</span>
-              {label}
-            </div>
-          ))}
-        </div>
-
-        <div className="p-6 space-y-4">
-          {/* ── Step 1: find student ── */}
-          {step === 1 && <>
-            <div className="flex gap-2">
-              <select className="input text-sm flex-1" value={uniFilter} onChange={e=>setUniFilter(e.target.value)}>
-                <option value="">All universities</option>
-                {unis.map(u=><option key={u.id} value={u.id}>{u.short_name}</option>)}
-              </select>
-            </div>
-            <div className="relative">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-              <input className="input pl-8" placeholder="Search by name, username or phone…"
-                value={studentQ} onChange={e=>doSearch(e.target.value)} autoFocus />
-              {searching && <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-slate-400"/>}
-            </div>
-            {students.length > 0 && (
-              <div className="border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
-                {students.map(s => (
-                  <button key={s.id} onClick={()=>{ setStudent(s); setStep(2); }}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-primary/5 text-left border-b border-slate-100 last:border-0 transition-colors">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm shrink-0">
-                      {s.name?.[0]?.toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-slate-900 text-sm truncate">{s.name}</div>
-                      <div className="text-xs text-slate-500">
-                        {s.username && <span className="text-primary">@{s.username} · </span>}
-                        {s.phone} {s.university_short && `· ${s.university_short}`}
-                      </div>
-                    </div>
-                    <ChevronRight size={14} className="text-slate-300 shrink-0"/>
-                  </button>
-                ))}
-              </div>
-            )}
-            {studentQ.length >= 2 && !searching && students.length === 0 && (
-              <p className="text-sm text-slate-400 text-center py-3">No students found for "{studentQ}"</p>
-            )}
-          </>}
-
-          {/* ── Step 2: pick property + room ── */}
-          {step === 2 && <>
-            {student && (
-              <div className="flex items-center gap-3 bg-primary/5 rounded-xl px-4 py-3">
-                <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold text-sm shrink-0">
-                  {student.name?.[0]?.toUpperCase()}
-                </div>
-                <div>
-                  <div className="font-semibold text-sm text-slate-900">{student.name}</div>
-                  <div className="text-xs text-slate-500">{student.username && `@${student.username} · `}{student.phone}</div>
-                </div>
-                <button onClick={()=>{ setStep(1); setStudent(null); }} className="ml-auto text-xs text-primary hover:underline">Change</button>
-              </div>
-            )}
-            <div>
-              <label className="label">Property</label>
-              <select className="input" value={propId} onChange={e=>setPropId(e.target.value)}>
-                <option value="">Select property…</option>
-                {properties.map(p=><option key={p.id} value={p.id}>{p.name} — {p.area}</option>)}
-              </select>
-            </div>
-            {propId && (
-              <div>
-                <label className="label">Room Type</label>
-                {propRooms.length === 0
-                  ? <p className="text-xs text-slate-400">No rooms found for this property.</p>
-                  : <div className="grid grid-cols-1 gap-2">
-                    {propRooms.map(r => (
-                      <button key={r.id} type="button"
-                        onClick={()=>setRoomId(String(r.id))}
-                        className={`flex items-center justify-between px-4 py-3 rounded-xl border-2 text-left transition-all ${String(roomId)===String(r.id) ? 'border-primary bg-primary/5' : 'border-slate-200 hover:border-slate-300'}`}>
-                        <div>
-                          <div className="font-semibold text-sm capitalize">{r.room_type}</div>
-                          <div className="text-xs text-slate-500">TZS {Number(r.monthly_price).toLocaleString()}/mo · {r.total_count} room{r.total_count!=1?'s':''}{parseInt(r.capacity)>1?` × ${r.capacity} beds`:''}</div>
-                        </div>
-                        {String(roomId)===String(r.id) && <Check size={16} className="text-primary shrink-0"/>}
-                      </button>
-                    ))}
-                  </div>
-                }
-              </div>
-            )}
-            <div>
-              <label className="label">Preferred Move-in Date</label>
-              <input type="date" className="input" value={moveIn} onChange={e=>setMoveIn(e.target.value)} min={new Date().toISOString().split('T')[0]} />
-            </div>
-            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>}
-            <div className="flex gap-3 pt-1">
-              <button onClick={()=>setStep(1)} className="btn-outline flex items-center gap-1"><ChevronLeft size={14}/>Back</button>
-              <button onClick={()=>{ if (!propId||!roomId||!moveIn){setError('Select a property, room, and move-in date.');return;} setError(''); setStep(3); }}
-                className="btn-primary flex-1 justify-center">Continue</button>
-            </div>
-          </>}
-
-          {/* ── Step 3: confirm ── */}
-          {step === 3 && <>
-            <div className="bg-slate-50 rounded-xl p-4 space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-slate-500">Student</span><span className="font-semibold">{student?.name}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Username</span><span className="font-semibold text-primary">@{student?.username||'—'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Property</span><span className="font-semibold">{selectedProperty?.name}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Room</span><span className="font-semibold capitalize">{selectedRoom?.room_type}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Price</span><span className="font-semibold text-primary">TZS {selectedRoom ? Number(selectedRoom.monthly_price).toLocaleString() : '—'}/mo</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Move-in</span><span className="font-semibold">{moveIn}</span></div>
-            </div>
-            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700">
-              The student will be notified and must confirm this booking before it becomes binding.
-            </div>
-            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>}
-            <div className="flex gap-3 pt-1">
-              <button onClick={()=>setStep(2)} className="btn-outline flex items-center gap-1"><ChevronLeft size={14}/>Back</button>
-              <button onClick={submit} disabled={loading} className="btn-primary flex-1 justify-center">
-                {loading ? <><Loader2 size={14} className="animate-spin mr-1"/>Creating…</> : 'Create Booking'}
-              </button>
-            </div>
-          </>}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ─── Assign GM modal ────────────────────────────────────────────
@@ -2600,7 +2445,7 @@ function BookingsList() {
 
   return (
     <div className="flex flex-col h-full">
-      {showBookFor && <BookForStudentModal onClose={()=>setShowBookFor(false)} onCreated={load}/>}
+      {showBookFor && <RegisterStudent onClose={()=>setShowBookFor(false)} onCreated={load}/>}
 
       {/* Top bar */}
       <div className="px-5 lg:px-8 pt-5 pb-3 flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
@@ -2610,7 +2455,7 @@ function BookingsList() {
         </div>
         <button onClick={()=>setShowBookFor(true)}
           className="btn-primary flex items-center gap-2 text-sm shrink-0">
-          <BookPlus size={15}/>Book for Student
+          <BookPlus size={15}/>Register a student
         </button>
       </div>
 
@@ -3635,14 +3480,34 @@ function StatusBadge({ status }) {
 }
 
 // ─── Main ─────────────────────────────────────────────────────
+// Keeps one broken page from blanking the whole portal
+class PageErrorBoundary extends React.Component {
+  constructor(p) { super(p); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidUpdate(prev) { if (prev.resetKey !== this.props.resetKey && this.state.failed) this.setState({ failed: false }); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div role="alert" className="m-5 bg-white border border-red-200 rounded-2xl p-6 text-center">
+        <AlertCircle className="mx-auto text-red-500 mb-2" />
+        <p className="text-sm text-slate-700 mb-3">This page hit a problem. Other pages still work.</p>
+        <button onClick={() => window.location.reload()} className="btn-sm border border-slate-300 min-h-[44px]">Reload</button>
+      </div>
+    );
+  }
+}
+
 export default function AdminPortal() {
-  const { isAdmin } = useAuth();
+  // isZoneManager was missing here before, which crashed the portal for zone managers and Geto officers
+  const { isAdmin, isZoneManager } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const loc = useLocation();
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col min-w-0 lg:ml-64 overflow-y-auto">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
+        <PageErrorBoundary resetKey={loc.pathname}>
         <Routes>
           <Route index element={<Dashboard />} />
           <Route path="properties"    element={<PropertiesList />} />
@@ -3650,11 +3515,14 @@ export default function AdminPortal() {
           <Route path="properties/:id" element={<PropertyDetail />} />
           <Route path="users"         element={<UsersList />} />
           <Route path="bookings"      element={<BookingsList />} />
+          {isAdmin && <Route path="analytics"     element={<AdminAnalytics />} />}
+          {isAdmin && <Route path="sms"           element={<AdminSms />} />}
           {isAdmin && <Route path="zones"         element={<ZonesView />} />}
           {isAdmin && <Route path="universities"  element={<UniversitiesView />} />}
           {(isAdmin || isZoneManager) && <Route path="staff" element={<StaffView />} />}
           {isAdmin && <Route path="types"         element={<TypesView />} />}
         </Routes>
+        </PageErrorBoundary>
       </div>
     </div>
   );

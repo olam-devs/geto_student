@@ -251,7 +251,7 @@ function PropertiesList() {
                   <div className="text-xs text-slate-500">{p.area} · {p.university_name}</div>
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     <StatusBadge status={p.status} />
-                    {p.verified && <span className="badge badge-blue">Verified</span>}
+                    {!!Number(p.verified) && <span className="badge badge-blue">Verified</span>}
                   </div>
                   <div className="text-xs text-slate-400 mt-1">
                     Rooms: {p.total_rooms||0} · Available: {p.available_rooms||0}
@@ -337,7 +337,7 @@ function PropertyDetail() {
             <div className="text-sm text-slate-500 mt-1">{prop.area} · {prop.university_name}</div>
             <div className="flex flex-wrap gap-2 mt-2">
               <StatusBadge status={prop.status} />
-              {prop.verified && <span className="badge badge-blue">Geto Verified ✓</span>}
+              {!!Number(prop.verified) && <span className="badge badge-blue">Geto Verified ✓</span>}
               {prop.zone_code && <span className="badge badge-gray">Zone {prop.zone_code}</span>}
             </div>
           </div>

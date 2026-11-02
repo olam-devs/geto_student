@@ -242,7 +242,7 @@ export default function PropertyModal({ propertyId, onClose }) {
                 </div>
 
                 {/* Verification record */}
-                {prop.verified && prop.verification && (
+                {!!Number(prop.verified) && prop.verification && (
                   <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-5">
                     <div className="flex items-center gap-2 mb-3">
                       <Shield size={16} className="text-green-600"/>
@@ -326,6 +326,11 @@ export default function PropertyModal({ propertyId, onClose }) {
                 {/* Rooms */}
                 <div className="mb-6">
                   <h4 className="font-display font-semibold text-slate-800 text-sm mb-3">Available Rooms</h4>
+                  {prop.availability === 'full' && (
+                    <p role="status" className="mb-3 text-sm bg-coral-50 border border-coral-100 text-coral-700 rounded-xl px-3 py-2">
+                      This house is full right now. You can still request a viewing or save it for later.
+                    </p>
+                  )}
                   <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
                     {prop.rooms?.map(room => (
                       <div key={room.id}>
@@ -356,7 +361,7 @@ export default function PropertyModal({ propertyId, onClose }) {
                           </div>
                           <div className="text-right shrink-0 ml-4">
                             <p className="font-display font-bold text-slate-900 text-sm">TZS {fmt(room.monthly_price)}<span className="text-[11px] font-normal text-slate-400">/mo</span></p>
-                            {(Number(room.listed_units) === 0 ? room.available_count > 0 : Number(room.beds_available) > 0) ? (
+                            {prop.availability !== 'full' && (Number(room.listed_units) === 0 ? room.available_count > 0 : Number(room.beds_available) > 0) ? (
                               <button onClick={() => handleBook(room)} className="mt-1 text-xs bg-primary-700 hover:bg-primary-600 text-white font-semibold px-3 py-1 rounded-lg transition-colors">Book Now</button>
                             ) : (
                               <span className="badge-rejected text-[10px] mt-1">Full</span>

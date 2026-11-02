@@ -50,7 +50,8 @@ export default function StudentDashboard() {
   }, []);
 
   const copyRef = () => {
-    navigator.clipboard.writeText(`https://getostudent.tz/join?ref=${user.referral_code}`);
+    // Was getostudent.tz/join (wrong domain, no such page); sign-up reads ?ref= and fills the code in
+    navigator.clipboard.writeText(`https://getostudent.co.tz/auth?ref=${encodeURIComponent(user.referral_code)}&utm_source=referral`);
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
@@ -464,7 +465,7 @@ export default function StudentDashboard() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <h3 className="font-display font-semibold text-slate-900 truncate">{p.name}</h3>
-                        {p.verified && <span className="badge-verified text-[10px] shrink-0"><CheckCircle2 size={9}/>Verified</span>}
+                        {!!Number(p.verified) && <span className="badge-verified text-[10px] shrink-0"><CheckCircle2 size={9}/>Verified</span>}
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">{p.property_type} · {p.area}</p>
                       {p.university_name && <p className="text-xs text-primary/70 mt-0.5">Near {p.university_name}</p>}
